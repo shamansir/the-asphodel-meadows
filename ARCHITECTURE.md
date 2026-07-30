@@ -248,15 +248,32 @@ Notes on the shape:
   emotional significance, 0–1, and it drives forgetting later. `witnesses` decides who
   gets the memory — anyone not listed genuinely does not know.
 
-### 4.3 Vocabulary (closed set)
+### 4.3 Vocabulary — closed set, and the engine boundary
 
-`bible/vocabulary.json` is the single source of truth, and it is a hard constraint on
-the agent, checked by the compiler.
+`bible/vocabulary.json` is the single source of truth for what the agent may write, and
+it is enforced by the compiler.
+
+It is also the **contract between the two repos**, so it carries a second job. The
+engine must be able to run *any* world — including your own next season, whose verbs
+will differ. So the engine knows only a small fixed set of **primitives**:
+
+```
+tween      transform a rig root over time (translate / rotate / scale)
+blend      interpolate toward a named pose in the rig
+express    swap the face layer
+bubble     draw a balloon with pre-laid-out lines, typewriter-revealed
+camera     tween the view transform
+```
+
+World verbs are *data that compiles to primitives*, never Elm constructors:
 
 ```json
 {
-  "acts":    ["walk","run","enter","exit","sit","stand","turn","pickUp","drop",
-              "give","take","point","reach","push","fall","jump","wave"],
+  "acts": {
+    "walk": { "prim": "tween", "curve": "easeInOut", "cycle": "walkCycle", "speed": 0.09 },
+    "fall": { "prim": "tween", "curve": "easeIn", "pose": "slump", "rot": 90 },
+    "give": { "prim": "blend", "pose": "reach", "hold": 0.4, "attach": "hand.r" }
+  },
   "poses":   ["idle","shrug","armsCrossed","handsUp","slump","lean","crouch","hide"],
   "expr":    ["neutral","happy","sad","angry","shocked","smug","confused","crying",
               "laughing","tired"],
@@ -265,10 +282,13 @@ the agent, checked by the compiler.
 }
 ```
 
-This is the whole trick for visual consistency. The agent is a *choreographer over a
-finite alphabet*, not an illustrator. Adding a new pose is a human art task plus a
-one-line vocabulary edit — and a vocabulary edit bumps `vocabularyHash`, which forces
-clients to reload assets.
+If `act` were an Elm custom type, adding a verb would mean an engine release, and the
+engine could never run someone else's world. As data, adding `"clamber"` is a rig pose
+plus four lines of JSON in the data repo, with no engine change at all.
+
+The closed set is still the whole trick for visual consistency: the agent is a
+*choreographer over a finite alphabet*, never an illustrator. A vocabulary edit bumps
+`vocabularyHash` in the manifest, which tells clients to drop and reload assets.
 
 ---
 
@@ -521,9 +541,10 @@ Compute is not the constraint here. Art vocabulary and taste are.
 1. **Spike the clock.** Hardcoded chunk JSON, two stick figures, one location, speech
    bubbles. Prove seek-anywhere: open the page at three random times, confirm state is
    correct and identical across two browsers. Everything else depends on this working.
-2. **Bible + vocabulary.** Write the world, then freeze the enums. The enums are the
-   contract between art, agent, and renderer — freezing them early is what lets the
-   other three tracks proceed in parallel.
+2. **Bible + vocabulary.** Write the world, then freeze the vocabulary. It is the
+   contract between art, agent, renderer, *and the two repos* — freezing it early is
+   what lets all those tracks proceed in parallel. The spike from step 1 becomes
+   `demo-world/`.
 3. **Rigs and one real location.** Replace the stick figures.
 4. **Compiler + schema.** Text layout, validation, asset resolution.
 5. **Writer agent, human-run.** Generate chunks by hand invocation, read every one,
@@ -536,6 +557,103 @@ Compute is not the constraint here. Art vocabulary and taste are.
 
 Steps 1 and 2 answer the only questions that can kill the project. Do them first, and
 do not start on rig art before the vocabulary is frozen.
+
+---
+
+## 13. Rewind (DVR mode)
+
+Viewers can step back in time. Implementation is nearly free — playback is already a
+pure function of `(timeline, t)`, so rewind is a negative clock offset and nothing else.
+No simulation, no state to rebuild.
+
+```elm
+type Clock
+    = Live               -- t = wallClock
+    | Paused Float       -- t frozen
+    | Rewound Float      -- t = wallClock - offset
+```
+
+The right mental model is **DVR on a livestream**, not a scrubber on a video file.
+
+### Rules
+
+- **Bounded to the season epoch.** Before a reset the cast, assets, and vocabulary are
+  all different. Crossing that boundary is an archive browser — a separate, later
+  product — not rewind.
+- **Loud mode indicator, always-visible RETURN TO LIVE.** Rewind is the one feature that
+  breaks the shared-moment promise, so leaving it must be obvious. A viewer who forgets
+  they rewound concludes the world has stalled.
+- **Needs an index.** Jumping requires knowing what is where. `seasons/s01/index.json`
+  holds one row per aired scene: `t0`, location, cast, one-line summary. Generated
+  incrementally by the same job that publishes chunks.
+- **Assets must reload on jump.** A jump to an unvisited location needs its background
+  and any rigs not currently resident. Show the scene from its start once loaded rather
+  than dropping the viewer mid-beat into a blank stage.
+
+The index is worth building even without rewind: it is also the "what you missed"
+summary, the searchable transcript, and the only thing on the site a search engine can
+usefully read.
+
+---
+
+## 14. Openness
+
+The project is open from the start. Script, memory, bible, and assets are published as
+they are written. **No encryption, no time-gating, no spoiler defence.**
+
+This is a deliberate reversal of the obvious instinct, on three grounds:
+
+1. Client-side encryption cannot work here anyway. The client must decrypt, so the
+   client has the key, so a determined viewer reads the script. Any scheme is
+   obfuscation with extra steps.
+2. Time-gating *does* work, but it costs a release pipeline, a delivery-block layer
+   below the chunk, and a lead time tuned around GitHub Actions' cron drift — real
+   complexity, all of it in service of a secret that has little value.
+3. Leaks are the engagement. A world that can be datamined is a world worth digging
+   into. The interesting artifact here is not the animation, it is the machinery
+   underneath it — and hiding the machinery hides the point.
+
+The one thing genuinely lost is simultaneous reveal: someone can read ahead and post
+"the mayor dies at 15:00". For an ambient, always-on world that is an acceptable trade.
+For a world built around scheduled dramatic beats it would not be, and that is the
+signal to revisit this decision — not before.
+
+### Consequences
+
+- No delivery blocks. The chunk is both the authoring unit and the delivery unit.
+- No release job, no lead time, no `ooo-source` / `ooo-land` secrecy split.
+- Publishing is `git push`. The data repo's contents *are* the content API.
+- **The future-only revision rule from §9 stays.** It was never about secrecy — it stops
+  a scene from mutating under a viewer who is mid-watch.
+
+### The two repos
+
+The split that remains is by concern, not by secrecy:
+
+| | `ooo-data` | `ooo-engine` |
+|---|---|---|
+| Contains | one world: bible, memory, script, assets | renderer, compiler, agent, editor, `demo-world/` |
+| Changes | daily, by agent | rarely, by humans |
+| Deploys | Pages, static content API with CORS | Pages, the app shell |
+| License | content licence, e.g. CC BY-SA | code licence, e.g. MIT |
+
+**Coupling is at runtime, not build time.** The app fetches `manifest.json` and chunks
+from the data repo's Pages origin. A submodule or package dependency would weld the two
+deploy cadences together, and they should not be welded — the engine ships monthly, the
+world ships daily.
+
+This split is also what forces the engine to stay world-agnostic (§4.3), which is what
+makes `demo-world/` possible, which is what lets anyone run or fork the machinery
+without your world's data. The three properties hold each other up.
+
+### Showing the bones
+
+Since nothing is hidden, make that a feature rather than a footnote: an in-page inspect
+panel over the running scene, showing the raw beat JSON, which arc this scene advances,
+and the memory delta it emits — plus links to the same content in git.
+
+The data is already loaded in the client, so this costs a panel and a keyboard shortcut.
+It is plausibly the most compelling thing on the page.
 
 ---
 
