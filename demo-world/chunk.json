@@ -1,0 +1,146 @@
+{
+  "chunk": "demo-0001",
+  "epoch": 1767225600000,
+  "cycle": 180,
+  "_note": "SPIKE FIXTURE. `cycle` loops the fixture forever so the clock always has something to show; the real client walks a manifest instead and never wraps. Bubble `w`/`h` are what the compiler would have measured at a 720px reference stage height (ARCHITECTURE.md §4.2) — nothing here is measured in the browser.",
+  "scenes": [
+    {
+      "id": "s001",
+      "t0": 0,
+      "dur": 60,
+      "loc": "loc.dunes",
+      "cast": [
+        { "id": "ch.pib", "at": [0.12, 0.78], "facing": 1, "pose": "idle", "expr": "neutral" },
+        { "id": "ch.wobb", "at": [0.68, 0.76], "facing": -1, "pose": "idle", "expr": "smug" }
+      ],
+      "beats": [
+        { "t": 1, "who": "ch.pib", "act": "walk", "to": [0.38, 0.78], "dur": 5 },
+        { "t": 6.5, "who": "ch.pib", "expr": "confused" },
+        { "t": 7, "who": "ch.pib", "pose": "handsUp", "dur": 0.6 },
+        { "t": 7.5, "who": "ch.pib", "dur": 4,
+          "say": { "kind": "normal", "lines": ["MY HAT.", "IT WAS RIGHT HERE."], "w": 250, "h": 76 } },
+        { "t": 12, "who": "ch.wobb", "pose": "shrug", "dur": 0.8 },
+        { "t": 12.5, "who": "ch.wobb", "dur": 4,
+          "say": { "kind": "normal", "lines": ["THE WIND TOOK IT.", "TUESDAY PROBLEM."], "w": 238, "h": 76 } },
+        { "t": 17, "who": "ch.pib", "expr": "angry" },
+        { "t": 17.5, "who": "ch.pib", "act": "walk", "to": [0.5, 0.78], "dur": 3 },
+        { "t": 21, "who": "ch.pib", "pose": "point", "dur": 0.5, "face": 1 },
+        { "t": 21.5, "who": "ch.pib", "dur": 4,
+          "say": { "kind": "normal", "lines": ["IT IS NOT", "EVEN TUESDAY."], "w": 190, "h": 76 } },
+        { "t": 26, "who": "ch.wobb", "expr": "shocked" },
+        { "t": 26.5, "who": "ch.wobb", "dur": 4.5,
+          "say": { "kind": "normal", "lines": ["OH.", "THEN WHAT DAY IS IT?"], "w": 274, "h": 76 } },
+        { "t": 31, "dur": 6, "cam": { "to": [0.55, 0.5], "zoom": 1.15 } },
+        { "t": 33, "who": "ch.pib", "pose": "slump", "dur": 1.2, "expr": "tired" },
+        { "t": 35, "who": "ch.pib", "dur": 4,
+          "say": { "kind": "normal", "lines": ["I DO NOT KNOW ANYMORE."], "w": 298, "h": 50 } },
+        { "t": 40, "who": "ch.wobb", "act": "dance", "dur": 16 },
+        { "t": 41, "who": "ch.wobb", "expr": "happy" },
+        { "t": 42, "who": "ch.wobb", "dur": 4,
+          "say": { "kind": "normal", "lines": ["DANCE HELPS ME THINK."], "w": 286, "h": 50 } },
+        { "t": 47, "who": "ch.pib", "expr": "confused" },
+        { "t": 48, "who": "ch.pib", "dur": 5,
+          "say": { "kind": "normal", "lines": ["IT DOES NOT.", "YOU JUST LIKE DANCING."], "w": 298, "h": 76 } },
+        { "t": 54, "dur": 6, "cam": { "to": [0.5, 0.5], "zoom": 1 } }
+      ],
+      "emits": [
+        { "id": "evt.hat_lost", "weight": 0.6,
+          "text": "Pib's hat went missing. Wobb blamed the wind, got the day of the week wrong, and danced instead of helping.",
+          "witnesses": ["ch.pib", "ch.wobb"] }
+      ]
+    },
+    {
+      "id": "s002",
+      "t0": 60,
+      "dur": 60,
+      "loc": "loc.dunes",
+      "cast": [
+        { "id": "ch.pib", "at": [0.5, 0.78], "facing": -1, "pose": "idle", "expr": "tired" },
+        { "id": "ch.wobb", "at": [0.68, 0.76], "facing": -1, "pose": "idle", "expr": "happy" }
+      ],
+      "beats": [
+        { "t": 1, "who": "ch.wobb", "act": "walk", "to": [0.3, 0.76], "dur": 6, "face": -1 },
+        { "t": 3, "who": "ch.pib", "dur": 4,
+          "say": { "kind": "normal", "lines": ["WHERE DID YOU LAST", "SEE IT?"], "w": 250, "h": 76 } },
+        { "t": 8, "who": "ch.wobb", "pose": "crouch", "dur": 1 },
+        { "t": 9, "who": "ch.wobb", "dur": 4,
+          "say": { "kind": "normal", "lines": ["ON YOUR HEAD.", "PROBABLY."], "w": 190, "h": 76 } },
+        { "t": 14, "who": "ch.pib", "pose": "handsUp", "dur": 0.6, "expr": "shocked" },
+        { "t": 15, "who": "ch.pib", "dur": 4,
+          "say": { "kind": "shout", "lines": ["IT IS NOT ON MY HEAD!"], "w": 286, "h": 50 } },
+        { "t": 20, "who": "ch.wobb", "pose": "idle", "dur": 0.8 },
+        { "t": 21, "who": "ch.wobb", "expr": "smug" },
+        { "t": 22, "who": "ch.wobb", "dur": 3.5,
+          "say": { "kind": "normal", "lines": ["I SAID PROBABLY."], "w": 226, "h": 50 } },
+        { "t": 26, "who": "ch.pib", "act": "walk", "to": [0.2, 0.78], "dur": 6, "face": -1 },
+        { "t": 27, "dur": 8, "cam": { "to": [0.35, 0.5], "zoom": 1.2 } },
+        { "t": 33, "who": "ch.pib", "pose": "crouch", "dur": 1, "expr": "confused" },
+        { "t": 35, "who": "ch.pib", "dur": 4,
+          "say": { "kind": "normal", "lines": ["JUST SAND.", "MORE SAND."], "w": 154, "h": 76 } },
+        { "t": 40, "who": "ch.wobb", "act": "hop", "dur": 8 },
+        { "t": 41, "who": "ch.wobb", "expr": "happy" },
+        { "t": 42, "who": "ch.wobb", "dur": 4,
+          "say": { "kind": "normal", "lines": ["SAND IS ALSO NICE!"], "w": 250, "h": 50 } },
+        { "t": 48, "who": "ch.pib", "expr": "angry", "face": 1, "pose": "idle", "dur": 0.6 },
+        { "t": 49, "who": "ch.pib", "dur": 2.5,
+          "say": { "kind": "shout", "lines": ["WOBB."], "w": 94, "h": 50 } },
+        { "t": 52, "who": "ch.wobb", "pose": "slump", "dur": 1, "expr": "sad" },
+        { "t": 53, "who": "ch.wobb", "dur": 3,
+          "say": { "kind": "whisper", "lines": ["SORRY."], "w": 106, "h": 50 } },
+        { "t": 56, "dur": 4, "cam": { "to": [0.5, 0.5], "zoom": 1 } }
+      ],
+      "emits": [
+        { "id": "evt.search_dunes", "weight": 0.3,
+          "text": "They searched the dunes and found only sand. Wobb suggested the hat was on Pib's head.",
+          "witnesses": ["ch.pib", "ch.wobb"] }
+      ]
+    },
+    {
+      "id": "s003",
+      "t0": 120,
+      "dur": 60,
+      "loc": "loc.dunes",
+      "cast": [
+        { "id": "ch.pib", "at": [0.2, 0.78], "facing": 1, "pose": "idle", "expr": "tired" },
+        { "id": "ch.wobb", "at": [0.32, 0.76], "facing": 1, "pose": "idle", "expr": "sad" }
+      ],
+      "beats": [
+        { "t": 2, "dur": 5, "cam": { "to": [0.3, 0.47], "zoom": 1.45 } },
+        { "t": 3, "who": "ch.pib", "expr": "shocked" },
+        { "t": 4, "who": "ch.pib", "pose": "point", "dur": 0.5 },
+        { "t": 5, "who": "ch.pib", "dur": 4,
+          "say": { "kind": "normal", "lines": ["WOBB.", "LOOK UP."], "w": 142, "h": 76 } },
+        { "t": 10, "who": "ch.wobb", "expr": "confused" },
+        { "t": 11, "who": "ch.wobb", "dur": 4.5,
+          "say": { "kind": "normal", "lines": ["I CANNOT LOOK UP.", "MY EYES ARE HERE."], "w": 238, "h": 76 } },
+        { "t": 16, "who": "ch.pib", "dur": 4.5,
+          "say": { "kind": "normal", "lines": ["THE HAT.", "IT IS ON YOUR HEAD."], "w": 262, "h": 76 } },
+        { "t": 21, "who": "ch.wobb", "pose": "handsUp", "dur": 0.6, "expr": "shocked" },
+        { "t": 22, "who": "ch.wobb", "dur": 4,
+          "say": { "kind": "normal", "lines": ["THE WIND", "PUT IT THERE."], "w": 190, "h": 76 } },
+        { "t": 26, "dur": 6, "cam": { "to": [0.45, 0.5], "zoom": 1.05 } },
+        { "t": 27, "who": "ch.pib", "expr": "angry", "pose": "idle", "dur": 0.6 },
+        { "t": 28, "who": "ch.pib", "act": "walk", "to": [0.36, 0.78], "dur": 3 },
+        { "t": 31, "who": "ch.pib", "dur": 3,
+          "say": { "kind": "shout", "lines": ["GIVE IT BACK."], "w": 190, "h": 50 } },
+        { "t": 34, "who": "ch.wobb", "act": "walk", "to": [0.76, 0.76], "dur": 7, "face": 1 },
+        { "t": 35, "who": "ch.wobb", "expr": "happy" },
+        { "t": 36, "who": "ch.wobb", "dur": 3,
+          "say": { "kind": "shout", "lines": ["CATCH ME FIRST!"], "w": 214, "h": 50 } },
+        { "t": 39, "who": "ch.pib", "act": "walk", "to": [0.62, 0.78], "dur": 8 },
+        { "t": 44, "who": "ch.wobb", "act": "dance", "dur": 10 },
+        { "t": 46, "who": "ch.wobb", "dur": 4,
+          "say": { "kind": "normal", "lines": ["THIS IS ALSO DANCING!"], "w": 286, "h": 50 } },
+        { "t": 51, "who": "ch.pib", "expr": "happy" },
+        { "t": 52, "who": "ch.pib", "dur": 5,
+          "say": { "kind": "normal", "lines": ["...FINE.", "IT IS A GOOD HAT."], "w": 238, "h": 76 } },
+        { "t": 57, "dur": 3, "cam": { "to": [0.5, 0.5], "zoom": 1 } }
+      ],
+      "emits": [
+        { "id": "evt.hat_found", "weight": 0.75,
+          "text": "The hat had been on Wobb's head the whole time. Wobb insisted the wind put it there. Pib let it go.",
+          "witnesses": ["ch.pib", "ch.wobb"] }
+      ]
+    }
+  ]
+}
