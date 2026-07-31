@@ -358,13 +358,14 @@ character within a month. The clamp is the thing that keeps the cast recognizabl
 
 ```
 bible/world.md + style.md         ~2k tokens   (fixed)
+bible/craft.md                    ~1.8k        (fixed)
 vocabulary.json                   ~0.4k
 open arcs                         ~0.5k
 per cast member: core + compacted ~1.5k each   (cast of 4–6 -> ~9k)
 recent world digest               ~2k
 episodic for cast, 14 days        ~8k
 --------------------------------------------
-target ceiling                    ~25k, hard cap 40k
+target ceiling                    ~27k, hard cap 40k
 ```
 
 When post-compaction totals stay above the ceiling, that is the season-pressure signal.
