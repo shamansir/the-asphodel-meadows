@@ -91,11 +91,19 @@ unit l =
 -- SCENE
 
 
-scene : Layout -> String -> State -> Float -> Bool -> List Renderable
-scene l loc st t stepped =
+{-| Display options that are the viewer's choice rather than the script's.
+-}
+type alias Opts =
+    { stepped : Bool
+    , plates : Bool
+    }
+
+
+scene : Layout -> String -> State -> Float -> Opts -> List Renderable
+scene l loc st t opts =
     let
         ts =
-            if stepped then
+            if opts.stepped then
                 toFloat (floor (t * 12)) / 12
 
             else
@@ -105,16 +113,156 @@ scene l loc st t stepped =
             Dict.toList st.actors
                 -- painter's algorithm: whoever is further down the stage is nearer
                 |> List.sortBy (\( _, a ) -> Tuple.second a.pos)
+
+        -- An `insert` is a hard cut to the clue and nothing else. Plates would
+        -- be enormous, and they belong to people who are not in the shot.
+        plates =
+            if opts.plates && st.shot /= "insert" then
+                drawPlates l actors
+
+            else
+                []
     in
     List.concat
         [ background l loc st.shot ts
         , List.concatMap (\( id, a ) -> drawActor l id a ts) actors
+        , plates
         , List.concatMap (drawBubble l st) st.bubbles
 
         -- ink goes over everything except the letterbox
         , List.concatMap (drawMark l loc) st.marks
         , letterbox l
         ]
+
+
+
+-- NAME PLATES
+
+
+{-| A filing card under each character's feet.
+
+Not only a debug aid. `bible/craft.md` §9 requires every scene to be legible
+from its middle, because viewers arrive mid-sentence rather than at the start —
+and "who are these people" is exactly what a late arrival lacks. A desk
+nameplate is also the right object for a world whose horror is procedural.
+
+Width is derived from character counts rather than measured, for the same
+reason the compiler pre-wraps speech (§4.2): every viewer must get identical
+geometry. These strings are engine-side constants, so a fixed per-character
+advance is exact enough and stable across browsers.
+
+-}
+type alias PlateBox =
+    { x : Float
+    , y : Float
+    , w : Float
+    , h : Float
+    , def : CharDef
+    }
+
+
+{-| Lay out every plate at once, then draw.
+
+It has to be done for the whole cast together, because the only sane way to
+handle two characters standing shoulder to shoulder is to push their plates
+apart horizontally. Stacking them vertically was worse — near the bottom of the
+frame there is no room below the feet, and the plates end up over faces.
+
+-}
+drawPlates : Layout -> List ( String, ActorState ) -> List Renderable
+drawPlates l actors =
+    let
+        s =
+            unit l / 720
+
+        gap =
+            8 * s
+
+        placed =
+            actors
+                |> List.filterMap (plateBox l s)
+                |> List.sortBy .x
+                |> List.foldl
+                    (\b acc ->
+                        case acc of
+                            prev :: _ ->
+                                { b | x = max b.x (prev.x + prev.w + gap) } :: acc
+
+                            [] ->
+                                [ b ]
+                    )
+                    []
+
+        -- the run may now hang off the right edge; slide the whole row back
+        overflow =
+            case placed of
+                last :: _ ->
+                    max 0 (last.x + last.w - (l.ox + l.boxW - 6 * s))
+
+                [] ->
+                    0
+    in
+    List.concatMap (\b -> plateShapes s { b | x = b.x - overflow }) placed
+
+
+plateBox : Layout -> Float -> ( String, ActorState ) -> Maybe PlateBox
+plateBox l s ( id, a ) =
+    let
+        def =
+            charDef id
+
+        ( fx, fy ) =
+            toScreen l a.pos
+
+        w =
+            max (toFloat (String.length def.name) * 11 + 36)
+                (toFloat (String.length def.sub) * 7.6 + 36)
+                * s
+
+        h =
+            44 * s
+    in
+    -- cheap cull: skip anyone the camera has left behind
+    if fx < l.ox - w || fx > l.ox + l.boxW + w then
+        Nothing
+
+    else
+        Just
+            { x = clamp (l.ox + 6 * s) (l.ox + l.boxW - w - 6 * s) (fx - w / 2)
+            , y = min (fy + 14 * s) (l.oy + l.boxH - h - 6 * s)
+            , w = w
+            , h = h
+            , def = def
+            }
+
+
+plateShapes : Float -> PlateBox -> List Renderable
+plateShapes s b =
+    [ Canvas.shapes [ fill (Color.rgb255 250 248 242), alpha 0.96 ]
+        [ Canvas.rect ( b.x, b.y ) b.w b.h ]
+    , Canvas.shapes [ stroke ink, lineWidth (1.4 * s) ]
+        [ Canvas.rect ( b.x, b.y ) b.w b.h ]
+
+    -- the file tab, in the character's own accent
+    , Canvas.shapes [ fill b.def.trim ]
+        [ Canvas.rect ( b.x, b.y ) (7 * s) b.h ]
+    , Canvas.text
+        [ font { size = round (17 * s), family = "'Comic Sans MS', 'Chalkboard SE', cursive" }
+        , align Center
+        , baseLine Middle
+        , fill ink
+        ]
+        ( b.x + b.w / 2 + 3 * s, b.y + 15 * s )
+        b.def.name
+    , Canvas.text
+        [ font { size = round (12 * s), family = "'Courier New', ui-monospace, monospace" }
+        , align Center
+        , baseLine Middle
+        , fill (Color.rgb255 132 126 140)
+        ]
+        ( b.x + b.w / 2 + 3 * s, b.y + 31 * s )
+        b.def.sub
+    ]
 
 
 
@@ -135,6 +283,7 @@ type alias Palette =
     , prop : Color
     , propTrim : Color
     , lamp : Color
+    , hatch : Color
     }
 
 
@@ -143,42 +292,131 @@ palette loc =
     case loc of
         -- Charon's terminal: wet slate, one sour lamp
         "loc.bank" ->
-            { sky = Color.rgb255 42 48 58
-            , band1 = Color.rgb255 50 57 68
-            , band2 = Color.rgb255 58 66 78
-            , far = Color.rgb255 38 44 54
-            , mid = Color.rgb255 46 54 64
-            , ground = Color.rgb255 62 70 78
-            , prop = Color.rgb255 34 40 48
-            , propTrim = Color.rgb255 176 150 62
-            , lamp = Color.rgb255 226 186 92
+            { sky = Color.rgb255 214 213 210
+            , band1 = Color.rgb255 202 201 198
+            , band2 = Color.rgb255 190 189 187
+            , far = Color.rgb255 168 168 166
+            , mid = Color.rgb255 150 150 148
+            , ground = Color.rgb255 178 177 174
+            , prop = Color.rgb255 92 92 94
+            , propTrim = Color.rgb255 60 60 62
+            , lamp = Color.rgb255 246 238 214
+            , hatch = Color.rgb255 26 26 30
             }
 
         -- the filing halls: crimson order, too many verticals
+        -- the filing halls take the most ink of anywhere: too many verticals,
+        -- not enough light
         "loc.ledgers" ->
-            { sky = Color.rgb255 58 38 42
-            , band1 = Color.rgb255 68 44 48
-            , band2 = Color.rgb255 78 50 54
-            , far = Color.rgb255 52 34 38
-            , mid = Color.rgb255 64 40 44
-            , ground = Color.rgb255 84 56 58
-            , prop = Color.rgb255 44 28 32
-            , propTrim = Color.rgb255 168 78 76
-            , lamp = Color.rgb255 226 150 110
+            { sky = Color.rgb255 198 196 196
+            , band1 = Color.rgb255 186 184 184
+            , band2 = Color.rgb255 174 172 172
+            , far = Color.rgb255 148 146 148
+            , mid = Color.rgb255 132 130 132
+            , ground = Color.rgb255 162 160 160
+            , prop = Color.rgb255 78 76 78
+            , propTrim = Color.rgb255 48 46 48
+            , lamp = Color.rgb255 244 234 216
+            , hatch = Color.rgb255 22 22 26
             }
 
         -- Asphodel: pleasant, endless, and that is the problem with it
+        -- Asphodel is the lightest place in the world and the emptiest
         _ ->
-            { sky = Color.rgb255 168 176 168
-            , band1 = Color.rgb255 158 168 158
-            , band2 = Color.rgb255 148 160 150
-            , far = Color.rgb255 132 146 136
-            , mid = Color.rgb255 142 156 144
-            , ground = Color.rgb255 154 168 152
-            , prop = Color.rgb255 118 134 122
-            , propTrim = Color.rgb255 138 152 138
-            , lamp = Color.rgb255 210 214 198
+            { sky = Color.rgb255 234 234 231
+            , band1 = Color.rgb255 226 226 223
+            , band2 = Color.rgb255 218 218 215
+            , far = Color.rgb255 198 199 196
+            , mid = Color.rgb255 186 187 184
+            , ground = Color.rgb255 208 209 205
+            , prop = Color.rgb255 120 120 120
+            , propTrim = Color.rgb255 88 88 88
+            , lamp = Color.rgb255 250 248 242
+            , hatch = Color.rgb255 40 40 44
             }
+
+
+{-| One light for the whole world, from the upper right. Every hatch stroke in
+every location runs along this axis — that is what stops the shading reading as
+texture and makes it read as light.
+-}
+sunAngle : Float
+sunAngle =
+    degrees -58
+
+
+{-| A single tapered brush stroke: wide at the shadow end, drawn to a point at
+the end nearest the sun.
+
+Canvas has no variable-width stroke, so this is a filled lens rather than a
+stroked line — two quadratics bowed apart at the root, meeting at the tip. The
+bow is what keeps it a brush rather than a ruler.
+
+-}
+hatchStroke : ( Float, Float ) -> Float -> Float -> Float -> Shape
+hatchStroke ( x, y ) len w0 bow =
+    let
+        ( dx, dy ) =
+            ( cos sunAngle, sin sunAngle )
+
+        ( nx, ny ) =
+            ( -dy, dx )
+
+        ( mx, my ) =
+            ( x + dx * len * 0.45 + nx * bow, y + dy * len * 0.45 + ny * bow )
+    in
+    Canvas.path ( x + nx * w0 * 0.5, y + ny * w0 * 0.5 )
+        [ Canvas.quadraticCurveTo ( mx + nx * w0 * 0.3, my + ny * w0 * 0.3 )
+            ( x + dx * len, y + dy * len )
+        , Canvas.quadraticCurveTo ( mx - nx * w0 * 0.3, my - ny * w0 * 0.3 )
+            ( x - nx * w0 * 0.5, y - ny * w0 * 0.5 )
+        ]
+
+
+{-| Scatter tapered strokes through a horizontal slice of the stage.
+
+`shade` scales length and weight together, so a darker band gets longer heavier
+strokes rather than merely more of them — which is how a pen actually darkens
+an area.
+
+Placement is hashed from the location name, so the hatching is identical for
+every viewer and never crawls between frames.
+
+-}
+hatchBand : Layout -> Color -> String -> Float -> Float -> Int -> Int -> Float -> Renderable
+hatchBand l col seed y0 y1 cols rows shade =
+    let
+        u =
+            unit l
+
+        -- A jittered lattice, not a random scatter. Pure randomness clumps and
+        -- leaves bald patches; ruling has to cover evenly to read as shading
+        -- rather than as debris. The jitter is what keeps it off a grid.
+        one r c =
+            let
+                sd =
+                    seed ++ String.fromInt r ++ "x" ++ String.fromInt c
+
+                jx =
+                    (Rng.float01 sd - 0.5) * 0.85
+
+                jy =
+                    (Rng.float01 (sd ++ "j") - 0.5) * 0.85
+            in
+            hatchStroke
+                (toScreen l
+                    ( ((toFloat c + 0.5 + jx) / toFloat cols) * 1.3 - 0.15
+                    , y0 + ((toFloat r + 0.5 + jy) / toFloat rows) * (y1 - y0)
+                    )
+                )
+                (u * (0.018 + Rng.float01 (sd ++ "l") * 0.022) * shade)
+                (u * (0.002 + Rng.float01 (sd ++ "w") * 0.0035) * shade)
+                (u * (Rng.float01 (sd ++ "b") - 0.5) * 0.02)
+    in
+    Canvas.shapes [ fill col, alpha 0.4 ]
+        (List.range 0 (rows - 1)
+            |> List.concatMap (\r -> List.map (one r) (List.range 0 (cols - 1)))
+        )
 
 
 background : Layout -> String -> String -> Float -> List Renderable
@@ -186,6 +424,9 @@ background l loc shot t =
     let
         p =
             palette loc
+
+        hatch =
+            hatchBand l p.hatch loc
     in
     if shot == "insert" then
         -- a hard cut to the clue, filling frame, on a flat ground. The clue is
@@ -197,11 +438,20 @@ background l loc shot t =
             [ [ Canvas.shapes [ fill p.sky ] [ Canvas.rect ( l.ox, l.oy ) l.boxW l.boxH ]
               , Canvas.shapes [ fill p.band1 ] [ stageRect l ( 0, 0.2 ) 1 0.25 ]
               , Canvas.shapes [ fill p.band2 ] [ stageRect l ( 0, 0.4 ) 1 0.25 ]
+
+              -- sky is lit, so it barely takes any ink at all
+              , hatch 0.0 0.22 26 2 0.45
+              , hatch 0.22 0.45 32 4 0.7
               ]
             , lamps l p loc t
             , [ hills l p.far 0.52 0.05 (Rng.float01 (loc ++ "far"))
+              , hatch 0.45 0.6 38 4 0.9
               , hills l p.mid 0.63 0.07 (Rng.float01 (loc ++ "mid"))
+              , hatch 0.6 0.74 42 5 1.05
               , Canvas.shapes [ fill p.ground ] [ stageRect l ( 0, 0.74 ) 1 0.3 ]
+
+              -- the floor is furthest from the light and carries the most ink
+              , hatch 0.74 1.04 48 8 1.2
               ]
             , scatter l p loc
             ]
@@ -500,6 +750,8 @@ type alias CharDef =
     , girth : Float -- body width as a fraction of height
     , limb : Float -- limb thickness as a fraction of height
     , topper : String
+    , name : String -- name plate, line 1
+    , sub : String -- name plate, line 2: function, not title
     }
 
 
@@ -513,8 +765,10 @@ charDef id =
             , trim = Color.rgb255 54 58 70
             , height = 0.30
             , girth = 0.26
-            , limb = 0.034
+            , limb = 0.043
             , topper = "none"
+            , name = "SHERLOCK HOLMES"
+            , sub = "CONSULTING DETECTIVE"
             }
 
         -- The noodliest rig. Even his idle has motion.
@@ -523,8 +777,10 @@ charDef id =
             , trim = Color.rgb255 186 150 74
             , height = 0.19
             , girth = 0.42
-            , limb = 0.052
+            , limb = 0.058
             , topper = "wings"
+            , name = "HERMES"
+            , sub = "MESSENGER · PSYCHOPOMP"
             }
 
         -- Tallest, and never straightened. Everything about him is damp.
@@ -533,8 +789,10 @@ charDef id =
             , trim = Color.rgb255 178 156 66
             , height = 0.34
             , girth = 0.30
-            , limb = 0.038
+            , limb = 0.047
             , topper = "hood"
+            , name = "CHARON"
+            , sub = "FERRYMAN"
             }
 
         -- Tight where the others are loose: permanently braced.
@@ -543,8 +801,10 @@ charDef id =
             , trim = Color.rgb255 104 36 44
             , height = 0.25
             , girth = 0.46
-            , limb = 0.046
+            , limb = 0.055
             , topper = "none"
+            , name = "MINOS"
+            , sub = "JUDGE OF THE DEAD"
             }
 
         "ch.persephone" ->
@@ -552,8 +812,10 @@ charDef id =
             , trim = Color.rgb255 206 172 76
             , height = 0.26
             , girth = 0.34
-            , limb = 0.040
+            , limb = 0.049
             , topper = "tuft"
+            , name = "PERSEPHONE"
+            , sub = "QUEEN · IN RESIDENCE"
             }
 
         _ ->
@@ -563,6 +825,8 @@ charDef id =
             , girth = 0.5
             , limb = 0.05
             , topper = "none"
+            , name = "UNFILED"
+            , sub = "NO RECORD"
             }
 
 
@@ -724,7 +988,13 @@ drawActor l id a t =
             1 / sy
 
         parts =
-            body l def pose h a.facing
+            body l def pose h id t
+                (if a.moving then
+                    a.act
+
+                 else
+                    ""
+                )
                 ++ face l def pose h a.facing a.expr id t
     in
     [ Canvas.group
@@ -738,61 +1008,143 @@ drawActor l id a t =
     ]
 
 
-body : Layout -> CharDef -> Pose -> Float -> Float -> List Renderable
-body l def pose h _ =
+{-| Skeleton anchor points, as fractions of total height. Everything is derived
+from these so proportions can be tuned in one place.
+
+Head top lands at exactly -1.0h, so `def.height` means what it says.
+
+-}
+type alias Rig =
+    { headY : Float
+    , headR : Float
+    , neckTop : Float
+    , shoulderY : Float
+    , hipY : Float
+    , shoulderR : Float
+    , hipR : Float
+    , armLen : Float
+    , limb : Float
+    , outline : Float
+    }
+
+
+rigOf : CharDef -> Float -> Rig
+rigOf def h =
+    { headY = -h * 0.84
+    , headR = h * 0.16
+    , neckTop = -h * 0.71
+    , shoulderY = -h * 0.58
+    , hipY = -h * 0.34
+    , shoulderR = h * def.girth * 0.42
+    , hipR = h * def.girth * 0.46
+    , armLen = h * 0.32
+    , limb = h * def.limb
+    , outline = h * 0.024
+    }
+
+
+{-| The boil: a hand-inked line never sits still. Resampled at 10fps so it
+shimmers rather than vibrates, and seeded from the part rather than from a
+runtime counter, so every viewer's wobble is identical.
+
+Cuphead does this by hand across thousands of frames. We get it for one hash.
+
+-}
+boil : Float -> String -> Int -> Float -> Float
+boil t seed i amp =
+    (Rng.float01 (seed ++ String.fromInt i ++ String.fromInt (floor (t * 10))) - 0.5) * amp
+
+
+{-| A limb as a travelling sine wave — the third of the three Adventure Time
+limb modes, alongside the stiff arc and the hard right-angle bend.
+
+Sampled as a polyline rather than a curve, because a sine needs more control
+points than a quadratic has. `sin (u * pi)` tapers the amplitude to zero at
+both ends, so the limb stays welded to the shoulder and the hand rather than
+detaching and swimming away.
+
+The mode matters more than the wobble: limbs are stiff almost all the time, and
+the comedy is in the moment one of them goes rubber. Continuous wobble reads as
+noise.
+
+-}
+wavePath : ( Float, Float ) -> ( Float, Float ) -> Float -> Float -> Float -> Shape
+wavePath ( ax, ay ) ( bx, by ) amp freq phase =
     let
-        girth =
-            h * def.girth
+        n =
+            14
 
-        limb =
-            h * def.limb
+        dx =
+            bx - ax
 
-        hipY =
-            -h * 0.42
+        dy =
+            by - ay
 
-        shoulderY =
-            -h * 0.7
+        len =
+            max 0.001 (sqrt (dx * dx + dy * dy))
 
-        legLen =
-            h * 0.42
+        pt i =
+            let
+                u =
+                    toFloat i / toFloat n
 
-        armLen =
-            h * 0.36
+                off =
+                    sin (phase + u * freq) * amp * sin (u * pi)
+            in
+            ( ax + dx * u - dy / len * off
+            , ay + dy * u + dx / len * off
+            )
+    in
+    Canvas.path (pt 0) (List.map (pt >> Canvas.lineTo) (List.range 1 n))
+
+
+body : Layout -> CharDef -> Pose -> Float -> String -> Float -> String -> List Renderable
+body _ def pose h id t mode =
+    let
+        r =
+            rigOf def h
+
+        wob =
+            h * 0.012
+
+        bo i =
+            boil t id i wob
 
         leg dir =
             let
                 hipX =
-                    dir * girth * 0.26
+                    dir * r.hipR * 0.5
 
                 footX =
-                    dir * (girth * 0.26 + pose.spread * girth * 0.35)
+                    dir * (r.hipR * 0.5 + pose.spread * h * 0.11)
 
                 ctrl =
-                    ( hipX + dir * limb * 0.7, hipY + legLen * 0.55 )
+                    ( hipX + dir * r.limb * 0.8 + bo 1, r.hipY + (0 - r.hipY) * 0.55 + bo 2 )
             in
-            Canvas.path ( hipX, hipY ) [ Canvas.quadraticCurveTo ctrl ( footX, 0 ) ]
+            if mode == "noodle" then
+                wavePath ( hipX, r.hipY ) ( footX, 0 ) (h * 0.05) 7.5 (t * 6 + dir * 1.7)
 
-        arm dir angle bend =
+            else
+                Canvas.path ( hipX, r.hipY ) [ Canvas.quadraticCurveTo ctrl ( footX, 0 ) ]
+
+        footAt dir =
+            ( dir * (r.hipR * 0.5 + pose.spread * h * 0.11), 0 )
+
+        handAt dir angle =
+            ( dir * r.shoulderR * 0.9 + dir * sin (degrees angle) * r.armLen
+            , r.shoulderY + cos (degrees angle) * r.armLen
+            )
+
+        arm dir angle bend i =
             let
                 shX =
-                    dir * girth * 0.45
+                    dir * r.shoulderR * 0.9
 
-                handX =
-                    shX + dir * sin (degrees angle) * armLen
+                ( handX, handY ) =
+                    handAt dir angle
 
-                handY =
-                    shoulderY + cos (degrees angle) * armLen
-
-                mx =
-                    (shX + handX) / 2
-
-                my =
-                    (shoulderY + handY) / 2
-
-                -- push the control point perpendicular to the arm so the limb
-                -- bows like a hose instead of hinging like a joint
                 nx =
-                    -(handY - shoulderY)
+                    -(handY - r.shoulderY)
 
                 ny =
                     handX - shX
@@ -800,48 +1152,84 @@ body l def pose h _ =
                 len =
                     max 0.001 (sqrt (nx * nx + ny * ny))
             in
-            Canvas.path ( shX, shoulderY )
-                [ Canvas.quadraticCurveTo
-                    ( mx + nx / len * bend * armLen * 0.3
-                    , my + ny / len * bend * armLen * 0.3
-                    )
+            if mode == "noodle" then
+                wavePath ( shX, r.shoulderY )
                     ( handX, handY )
+                    (r.armLen * 0.34)
+                    9.5
+                    (t * 7 + toFloat i)
+
+            else
+                -- control point pushed perpendicular to the arm, so the limb
+                -- bows like a hose instead of hinging like a joint
+                Canvas.path ( shX, r.shoulderY )
+                    [ Canvas.quadraticCurveTo
+                        ( (shX + handX) / 2 + nx / len * bend * r.armLen * 0.32 + bo i
+                        , (r.shoulderY + handY) / 2 + ny / len * bend * r.armLen * 0.32 + bo (i + 1)
+                        )
+                        ( handX, handY )
+                    ]
+
+        limbs =
+            [ leg -1
+            , leg 1
+            , arm -1 pose.armL pose.bendL 10
+            , arm 1 pose.armR pose.bendR 20
+            ]
+
+        torso =
+            [ Canvas.circle ( 0, r.hipY ) r.hipR
+            , Canvas.circle ( 0, r.shoulderY ) r.shoulderR
+            , Canvas.rect ( -r.shoulderR, r.shoulderY ) (r.shoulderR * 2) (r.hipY - r.shoulderY)
+            , Canvas.rect ( -h * 0.05, r.neckTop ) (h * 0.1) (r.shoulderY - r.neckTop)
+            ]
+
+        gloves =
+            [ Canvas.circle (handAt -1 pose.armL) (r.limb * 0.85)
+            , Canvas.circle (handAt 1 pose.armR) (r.limb * 0.85)
+            ]
+
+        shoe dir =
+            let
+                fxx =
+                    Tuple.first (footAt dir)
+            in
+            -- toe leads forward, heel stays under the leg: without this the
+            -- legs just stop, and the figure reads as an insect
+            Canvas.path ( fxx - h * 0.028, 0 )
+                [ Canvas.quadraticCurveTo ( fxx - h * 0.03, h * 0.05 ) ( fxx + h * 0.02, h * 0.048 )
+                , Canvas.quadraticCurveTo ( fxx + h * 0.085, h * 0.046 ) ( fxx + h * 0.082, 0 )
+                , Canvas.lineTo ( fxx - h * 0.028, 0 )
                 ]
 
-        hand dir angle =
-            let
-                shX =
-                    dir * girth * 0.45
-            in
-            Canvas.circle
-                ( shX + dir * sin (degrees angle) * armLen
-                , shoulderY + cos (degrees angle) * armLen
-                )
-                (limb * 0.72)
-
-        hose =
-            [ stroke def.body, lineWidth limb, lineCap RoundCap, lineJoin RoundJoin ]
+        stroked w c =
+            [ stroke c, lineWidth w, lineCap RoundCap, lineJoin RoundJoin ]
     in
-    [ Canvas.shapes hose [ leg -1, leg 1 ]
-    , Canvas.shapes hose [ arm -1 pose.armL pose.bendL, arm 1 pose.armR pose.bendR ]
-    , Canvas.shapes [ fill def.body ]
-        [ Canvas.circle ( 0, hipY ) (girth * 0.5)
-        , Canvas.circle ( 0, shoulderY ) (girth * 0.44)
-        , Canvas.rect ( -girth * 0.5, shoulderY ) girth (hipY - shoulderY)
-        ]
-    , Canvas.shapes [ fill def.body ] [ hand -1 pose.armL, hand 1 pose.armR ]
-    , topper l def h
+    -- Every part is drawn twice: a fat dark pass, then the fill inside it. The
+    -- outline is what separates head from shoulders when both are the same
+    -- colour — which is how Adventure Time gets away with it, and why Minos
+    -- read as an egg before this existed.
+    [ Canvas.shapes (stroked (r.limb + r.outline * 2) ink) limbs
+    , Canvas.shapes (stroked r.limb def.body) limbs
+    , Canvas.shapes [ stroke ink, lineWidth (r.outline * 2), lineJoin RoundJoin ] torso
+    , Canvas.shapes [ fill def.body ] torso
+    , Canvas.shapes [ stroke ink, lineWidth (r.outline * 2), lineJoin RoundJoin ]
+        [ shoe -1, shoe 1 ]
+    , Canvas.shapes [ fill ink ] [ shoe -1, shoe 1 ]
+    , Canvas.shapes [ stroke ink, lineWidth (r.outline * 1.6) ] gloves
+    , Canvas.shapes [ fill (Color.rgb255 248 246 240) ] gloves
+    , topper def h
     ]
 
 
-topper : Layout -> CharDef -> Float -> Renderable
-topper _ def h =
+topper : CharDef -> Float -> Renderable
+topper def h =
     let
         headR =
-            h * 0.19
+            h * 0.16
 
         headY =
-            -h * 0.85
+            -h * 0.84
     in
     case def.topper of
         "antenna" ->
@@ -954,11 +1342,14 @@ face _ def _ h _ expr id t =
         f =
             faceOf expr
 
+        r =
+            rigOf def h
+
         headR =
-            h * 0.19
+            r.headR
 
         headY =
-            -h * 0.85
+            r.headY
 
         -- deterministic blink: same instant for every viewer
         blink =
@@ -1016,7 +1407,9 @@ face _ def _ h _ expr id t =
                         [ Canvas.quadraticCurveTo ( 0, mouthY + f.curve * headR * 0.45 ) ( mouthW, mouthY ) ]
                     ]
     in
-    [ Canvas.shapes [ fill def.body ] [ Canvas.circle ( 0, headY ) headR ]
+    [ Canvas.shapes [ stroke ink, lineWidth (r.outline * 2) ]
+        [ Canvas.circle ( 0, headY ) headR ]
+    , Canvas.shapes [ fill def.body ] [ Canvas.circle ( 0, headY ) headR ]
     , eye -1
     , eye 1
     , brow -1
@@ -1170,7 +1563,7 @@ speech l b a =
             toScreen l a.pos
 
         headTop =
-            fy - (charDef b.who).height * u * 1.08
+            fy - (charDef b.who).height * u * 1.0
 
         cx =
             fx + a.facing * bw * 0.22
@@ -1184,12 +1577,27 @@ speech l b a =
         lineH =
             26 * s
 
-        tail =
-            Canvas.path ( cx - bw * 0.1, cy + bh * 0.4 )
-                [ Canvas.lineTo ( cx + bw * 0.06, cy + bh * 0.42 )
-                , Canvas.lineTo ( fx + a.facing * u * 0.02, headTop - u * 0.01 )
-                , Canvas.lineTo ( cx - bw * 0.1, cy + bh * 0.4 )
-                ]
+        -- The tail's throat sits well inside the balloon, so the two fill as a
+        -- clean union. Two versions of it: closed for filling, open — no base
+        -- edge — for stroking, because the base is the seam we never want to
+        -- see.
+        tailRoot1 =
+            ( cx - bw * 0.24, cy + bh * 0.30 )
+
+        tailRoot2 =
+            ( cx + bw * 0.02, cy + bh * 0.36 )
+
+        -- overshoot slightly into the head, so the spike lands on the speaker
+        -- instead of stopping in mid-air near them
+        tailTip =
+            ( fx + a.facing * u * 0.03, headTop + u * 0.02 )
+
+        tailFill =
+            Canvas.path tailRoot1
+                [ Canvas.lineTo tailRoot2, Canvas.lineTo tailTip, Canvas.lineTo tailRoot1 ]
+
+        tailOutline =
+            Canvas.path tailRoot1 [ Canvas.lineTo tailTip, Canvas.lineTo tailRoot2 ]
 
         centred fam size col =
             List.indexedMap
@@ -1208,11 +1616,17 @@ speech l b a =
         comic =
             "'Comic Sans MS', 'Chalkboard SE', 'Marker Felt', cursive"
 
+        -- Order is the whole trick. Fill the union first so there is no seam;
+        -- stroke the balloon; then re-fill the tail to erase the balloon's
+        -- outline where it crosses the throat; then stroke the tail's two free
+        -- edges only. Nothing is ever drawn over the balloon body.
         balloon shape lw col =
-            [ Canvas.shapes [ fill Color.white ] [ tail, shape ]
+            [ Canvas.shapes [ fill Color.white ] [ shape, tailFill ]
             , Canvas.shapes [ stroke col, lineWidth (lw * s), lineJoin RoundJoin ] [ shape ]
-            , Canvas.shapes [ stroke col, lineWidth (lw * s), lineJoin RoundJoin ] [ tail ]
-            , Canvas.shapes [ fill Color.white ] [ tail ]
+            , Canvas.shapes [ fill Color.white ] [ tailFill ]
+            , Canvas.shapes
+                [ stroke col, lineWidth (lw * s), lineJoin RoundJoin, lineCap RoundCap ]
+                [ tailOutline ]
             ]
     in
     case b.kind of

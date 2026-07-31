@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Asphodel Meadows — clock spike</title>
+    <title>Asphodel Meadows — animation lab</title>
     <style>
       html, body { margin: 0; height: 100%; background: #16141c; overflow: hidden; }
       canvas { display: block; }
@@ -13,16 +13,9 @@
     <div id="root"></div>
     <!-- joakin/elm-canvas needs its custom element registered before Elm boots -->
     <script src="./vendor/elm-canvas.js"></script>
-    <script src="./main.js"></script>
+    <script src="./lab.js"></script>
     <script>
-      // ?t=<cycle seconds> pins the clock for reproducible screenshots,
-      // ?hud=0 hides the overlay, ?stepped=0 disables 12fps sampling.
-      const q = new URLSearchParams(location.search);
-      const flags = {};
-      for (const k of ["t", "hud", "stepped"]) {
-        if (q.has(k)) flags[k] = parseFloat(q.get(k));
-      }
-      Elm.Main.init({ node: document.getElementById("root"), flags: flags });
+      Elm.Lab.init({ node: document.getElementById("root") });
     </script>
   </body>
 </html>

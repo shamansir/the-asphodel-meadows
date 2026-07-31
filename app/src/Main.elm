@@ -45,6 +45,7 @@ type alias Model =
     , size : ( Float, Float )
     , debug : Bool
     , stepped : Bool
+    , plates : Bool
     }
 
 
@@ -63,7 +64,7 @@ type Msg
     | Key String
 
 
-main : Program () Model Msg
+main : Program D.Value Model Msg
 main =
     Browser.element
         { init = init
@@ -73,16 +74,36 @@ main =
         }
 
 
-init : () -> ( Model, Cmd Msg )
-init _ =
+{-| Query-string flags, for the screenshot harness (`tools/shots.sh`).
+
+`?t=` pins the clock to a fixed cycle-time so a capture is reproducible —
+without it every screenshot lands wherever the wall clock happens to be, and
+two runs can never be compared. `?hud=0` strips the overlay for a clean frame.
+
+-}
+init : D.Value -> ( Model, Cmd Msg )
+init flags =
+    let
+        num key fallback =
+            D.decodeValue (D.field key D.float) flags |> Result.withDefault fallback
+
+        pinned =
+            num "t" -1
+    in
     ( { chunk = Nothing
       , error = Nothing
       , now = Time.millisToPosix 0
       , skewMs = 0
-      , clock = Live
+      , clock =
+            if pinned >= 0 then
+                Paused pinned
+
+            else
+                Live
       , size = ( 1280, 720 )
-      , debug = True
-      , stepped = True
+      , debug = num "hud" 1 /= 0
+      , stepped = num "stepped" 1 /= 0
+      , plates = num "plates" 1 /= 0
       }
     , Cmd.batch
         [ fetchChunk
@@ -192,6 +213,9 @@ applyKey key model =
 
         "s" ->
             { model | stepped = not model.stepped }
+
+        "n" ->
+            { model | plates = not model.plates }
 
         _ ->
             model
@@ -403,7 +427,12 @@ view model =
                         in
                         [ Canvas.toHtml ( round w, round h )
                             [ style "display" "block" ]
-                            (Render.scene l found.scene.loc st found.localT model.stepped)
+                            (Render.scene l
+                                found.scene.loc
+                                st
+                                found.localT
+                                { stepped = model.stepped, plates = model.plates }
+                            )
                         , hud model chunk t found
                         ]
         )
@@ -461,6 +490,7 @@ hud model chunk t found =
               )
             , ( "skew", String.fromInt (round model.skewMs) ++ " ms" )
             , ( "sampling", ifElse model.stepped "12 fps stepped" "smooth" )
+            , ( "plates", ifElse model.plates "on" "off" )
             ]
 
         row ( k, v ) =
@@ -491,7 +521,7 @@ hud model chunk t found =
                     List.map row rows
                         ++ [ div
                                 [ style "margin-top" "8px", style "color" "#6f6a7c" ]
-                                [ text "R restart scene · [ ] prev/next scene · space pause · ←/→ ±10s · L live · S sampling · D details" ]
+                                [ text "R restart scene · [ ] prev/next · N plates · space pause · ←/→ ±10s · L live · S sampling · D details" ]
                            ]
 
                 else

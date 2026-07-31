@@ -26,11 +26,38 @@ server's `Date` response header to correct for a wrong local clock (§1).
 |---|---|
 | `R` | restart the scene playing now, from zero |
 | `[` `]` | jump to the previous / next scene's start |
+| `N` | toggle name plates |
 | `space` | pause / resume (resume snaps back to live) |
 | `←` `→` | seek ∓10s |
 | `L` | return to live |
 | `S` | toggle 12fps stepped sampling — the difference is the whole cartoon feel |
 | `D` | toggle the detail readout |
+
+## Animation lab
+
+<http://localhost:8123/app/lab.html>
+
+One character on a bench. Pick a cast member and a location, then fire poses,
+expressions and acts at them and watch what the rig actually does.
+
+The button lists are read from `bible/vocabulary.json` at runtime, not hardcoded — so
+anything the writer agent is allowed to emit is something you can press here. A verb that
+appears in the lab and does nothing is a real gap in the renderer, and a verb the renderer
+has but the lab does not show is a verb the compiler would reject. (That second case is
+not hypothetical: the lab found `noodle` missing from the vocabulary the day it was built.)
+
+## Capture frames
+
+```bash
+tools/shots.sh              # one frame per scene -> .shots/
+tools/shots.sh 148 420      # specific cycle-times, in seconds
+HUD=1 tools/shots.sh 148    # keep the debug overlay
+```
+
+Headless Chrome, no npm install. `?t=` pins the world clock so a capture is byte-identical
+between runs — without that every screenshot lands wherever the wall clock happens to be
+and two runs can never be compared. `?hud=0`, `?plates=0` and `?stepped=0` are also
+accepted, which is how the shots come out clean.
 
 ## Check it without a browser
 

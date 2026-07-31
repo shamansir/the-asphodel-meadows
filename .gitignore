@@ -1,5 +1,6 @@
 .DS_Store
-elm-stuff/
-node_modules/
+.shots/
 app/main.js
 app/probe.js
+elm-stuff/
+node_modules/

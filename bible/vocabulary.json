@@ -1,6 +1,8 @@
 {
   "$comment": "Closed vocabulary. Single source of truth for what the writer agent may emit, enforced by the compiler (ARCHITECTURE.md §4.3, §8). Also the contract between the data repo and the engine: the engine knows only `primitives`; everything else here is data that compiles down to them. Adding a verb is a rig pose plus an entry here — never an engine release. Editing this file bumps vocabularyHash, which makes clients reload assets.",
 
+  "$limbModes": "Limbs are stiff by default and go rubber only when an act says so. Adventure Time switches between a stiff arc, a hard right-angle bend and a travelling sine wave — the comedy is in the contrast, and continuous wobble reads as noise. `limbMode` on an act selects it: absent = stiff, \"wave\" = sine. `bend` and `whip` are not implemented yet and must not be emitted.",
+
   "primitives": {
     "tween": "transform a rig root over time — translate, rotate, scale",
     "blend": "interpolate toward a named pose in the rig",
@@ -31,6 +33,7 @@
     "take":     { "prim": "blend", "pose": "reach", "hold": 0.4, "transfer": true },
     "examine":  { "prim": "blend", "pose": "stoop", "hold": 1.2, "requires": "insert" },
     "dance":    { "prim": "blend", "pose": "flail", "loop": true, "wobble": 1.6 },
+    "noodle":   { "prim": "tween", "limbMode": "wave", "amp": 0.34, "freq": 9.5, "loop": true },
     "vanish":   { "prim": "tween", "curve": "easeIn", "alpha": 0, "squash": 1.4, "godsOnly": true },
     "manifest": { "prim": "tween", "curve": "easeOut", "alpha": 1, "squash": 1.4, "godsOnly": true }
   },
