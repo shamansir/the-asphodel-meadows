@@ -719,6 +719,9 @@ background l loc shot hatched =
             -- visible strip is thin, so the whole gradient has to happen there.
             , [ hills l p.far 0.52 0.05 farSeed ]
             , hatch p.far (bandRegion farRidge midRidge 0.46 0.72) 158 9 0.8 1.35 0.014
+            -- Between the two ridges: the far hill is behind them, the near
+            -- hill covers their feet.
+            , colonnade l p loc midRidge
             , [ hills l p.mid 0.63 0.07 midSeed ]
             , hatch p.mid (bandRegion midRidge (always 0.742) 0.55 0.75) 144 10 0.66 1.0 0.014
             , [ Canvas.shapes [ fill p.ground ] [ stageRect l ( 0, 0.74 ) 1 0.3 ]
@@ -860,8 +863,7 @@ props l p loc =
             lo + Rng.float01 (loc ++ seed ++ String.fromInt i) * (hi - lo)
     in
     List.concat
-        [ colonnade l p loc
-        , flagstones l p
+        [ flagstones l p
         , case loc of
             "loc.bank" ->
                 mooring l p loc
@@ -893,11 +895,17 @@ props l p loc =
         ]
 
 
-{-| A receding row of columns on the horizon. The House has been standing a very
-long time and should look like it.
+{-| A receding row of columns, standing on the near ridge.
+
+Each column's foot follows the skyline it stands on, so the row rises and falls
+with the ground instead of sitting on an invisible flat shelf. The feet are set
+slightly *below* that line and the colonnade is drawn before the ridge itself,
+so the hill buries them — which is what puts the row behind the near hill and
+in front of the far one.
+
 -}
-colonnade : Layout -> Palette -> String -> List Renderable
-colonnade l p loc =
+colonnade : Layout -> Palette -> String -> (Float -> Float) -> List Renderable
+colonnade l p loc ridge =
     if loc == "loc.asphodel" then
         []
 
@@ -909,13 +917,13 @@ colonnade l p loc =
             col i =
                 let
                     x =
-                        -0.02 + toFloat i * 0.075
+                        -0.06 + toFloat i * 0.072
 
                     ( px, py ) =
-                        toScreen l ( x, 0.6 )
+                        toScreen l ( x, ridge x + 0.03 )
 
                     hgt =
-                        u * (0.15 + Rng.float01 (loc ++ "col" ++ String.fromInt i) * 0.05)
+                        u * (0.14 + Rng.float01 (loc ++ "col" ++ String.fromInt i) * 0.05)
 
                     wid =
                         u * 0.018
@@ -924,8 +932,10 @@ colonnade l p loc =
                 , Canvas.rect ( px - wid * 1.5, py - hgt - u * 0.012 ) (wid * 3) (u * 0.012)
                 ]
         in
-        [ Canvas.shapes [ fill p.far, alpha 0.85 ]
-            (List.concatMap col (List.range 0 14))
+        [ Canvas.shapes [ fill p.far ]
+            (List.concatMap col (List.range 0 16))
+        , Canvas.shapes [ stroke ink, lineWidth (u * 0.0025), alpha 0.35 ]
+            (List.concatMap col (List.range 0 16))
         ]
 
 
