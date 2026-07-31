@@ -18,6 +18,7 @@ Nobody watches an episode. People drop in on a world that has been running witho
 | Hosting | GitHub Pages, static only, no backend |
 | Openness | Fully open. Script, memory, and bible are published as they are written. No encryption, no time-gating, no spoiler defence — leaks are treated as engagement, not damage. See §13. |
 | Repo split | Two repos: **data** (this world) and **engine** (renderer, compiler, agent, plus a sample world for rehearsal). See §13. |
+| Universe | Sherlock Holmes × Greek myth, in one world. Season 1 is *The Great Hiatus* — the three years Doyle never explained. Both sources fully public domain, so there is no IP exposure at all. Tone: *Knives Out*. See `bible/world.md`. |
 
 ### Naming caution
 
@@ -263,7 +264,17 @@ blend      interpolate toward a named pose in the rig
 express    swap the face layer
 bubble     draw a balloon with pre-laid-out lines, typewriter-revealed
 camera     tween the view transform
+annotate   draw an ink overlay above the stage
 ```
+
+`annotate` is the sixth, added once the universe was chosen: a detective show has to
+render *reasoning made visible*, and the first five primitives cover only bodies and
+speech. It draws circles, arrows and link lines over the stage in one accent colour.
+The full deduction grammar — `insert` shot, annotation, `deduction` bubble, `dawning`
+expression — is in `bible/style.md`.
+
+Finding this before rig art started is exactly why §12 orders the vocabulary ahead of
+the drawing.
 
 World verbs are *data that compiles to primitives*, never Elm constructors:
 
@@ -514,7 +525,8 @@ watching, and nobody sees a jump.
 | Cron fails silently for days | Viewer runs off the end of the timeline | 3-day buffer; client falls back to ambient generator seeded by `t`; disclose "the world is idling" |
 | Model quality degrades | Boring or incoherent world | Arc-advance requirement; weekly human read of the world digest |
 | Character omniscience | Continuity breaks | Witness cross-check in validator |
-| Cast bloat | Every scene a crowd | Cap active cast at 6; validator warns |
+| Cast bloat | Every scene a crowd | 6 active memory files, 5 speaking parts per scene; validator warns |
+| Agent introduces a held-back character | Season arc spent early | `status: dormant` in the character file; compiler rejects any scene casting one |
 | Bubble overflow | Unreadable | Compiler-side layout with real font metrics |
 | Client clock skew | Viewers desynced | `Date` header skew correction |
 | Long-lived tab misses revisions | Stale timeline | 5-minute manifest poll |

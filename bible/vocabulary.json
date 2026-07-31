@@ -1,0 +1,73 @@
+{
+  "$comment": "Closed vocabulary. Single source of truth for what the writer agent may emit, enforced by the compiler (ARCHITECTURE.md §4.3, §8). Also the contract between the data repo and the engine: the engine knows only `primitives`; everything else here is data that compiles down to them. Adding a verb is a rig pose plus an entry here — never an engine release. Editing this file bumps vocabularyHash, which makes clients reload assets.",
+
+  "primitives": {
+    "tween": "transform a rig root over time — translate, rotate, scale",
+    "blend": "interpolate toward a named pose in the rig",
+    "express": "swap the face layer",
+    "bubble": "draw a balloon with pre-laid-out lines, revealed over time",
+    "camera": "tween the view transform",
+    "annotate": "draw an ink overlay above the stage — the deduction grammar"
+  },
+
+  "acts": {
+    "walk":     { "prim": "tween", "curve": "easeInOut", "cycle": "walkCycle", "speed": 0.09 },
+    "run":      { "prim": "tween", "curve": "easeInOut", "cycle": "walkCycle", "speed": 0.22 },
+    "pace":     { "prim": "tween", "curve": "easeInOut", "cycle": "walkCycle", "speed": 0.11, "loop": true },
+    "enter":    { "prim": "tween", "curve": "easeOut", "from": "offstage" },
+    "exit":     { "prim": "tween", "curve": "easeIn", "to": "offstage" },
+    "turn":     { "prim": "tween", "curve": "easeInOut", "axis": "facing" },
+    "sit":      { "prim": "blend", "pose": "seated", "curve": "easeOut" },
+    "stand":    { "prim": "blend", "pose": "idle", "curve": "easeOut" },
+    "hop":      { "prim": "tween", "curve": "easeOut", "arc": 0.22, "loop": true },
+    "fall":     { "prim": "tween", "curve": "easeIn", "pose": "slump", "rot": 90 },
+    "recoil":   { "prim": "tween", "curve": "easeOut", "back": 0.06, "squash": 0.86 },
+    "loom":     { "prim": "tween", "curve": "easeInOut", "scale": 1.35, "toward": "target" },
+    "point":    { "prim": "blend", "pose": "point", "hold": 0.5 },
+    "reach":    { "prim": "blend", "pose": "reach", "hold": 0.4, "attach": "hand.r" },
+    "pickUp":   { "prim": "blend", "pose": "crouch", "attach": "hand.r", "hold": 0.3 },
+    "drop":     { "prim": "blend", "pose": "idle", "detach": "hand.r" },
+    "give":     { "prim": "blend", "pose": "reach", "hold": 0.4, "transfer": true },
+    "take":     { "prim": "blend", "pose": "reach", "hold": 0.4, "transfer": true },
+    "examine":  { "prim": "blend", "pose": "stoop", "hold": 1.2, "requires": "insert" },
+    "dance":    { "prim": "blend", "pose": "flail", "loop": true, "wobble": 1.6 },
+    "vanish":   { "prim": "tween", "curve": "easeIn", "alpha": 0, "squash": 1.4, "godsOnly": true },
+    "manifest": { "prim": "tween", "curve": "easeOut", "alpha": 1, "squash": 1.4, "godsOnly": true }
+  },
+
+  "poses": [
+    "idle", "seated", "shrug", "armsCrossed", "handsUp", "slump", "lean",
+    "crouch", "stoop", "hide", "point", "reach", "flail",
+    "steeple", "lounge", "loom"
+  ],
+
+  "expr": [
+    "neutral", "happy", "sad", "angry", "shocked", "smug", "confused",
+    "crying", "laughing", "tired", "bored", "dawning", "withering"
+  ],
+
+  "bubbles": ["normal", "shout", "whisper", "thought", "narration", "offscreen", "deduction"],
+
+  "camera": {
+    "shot": ["wide", "mid", "close", "insert"],
+    "move": ["hold", "pan", "push", "pull", "cut"]
+  },
+
+  "annotate": {
+    "kinds": ["circle", "arrow", "link", "label", "strike"],
+    "$comment": "Ink overlay drawn above the stage in one accent colour. Scratchy draw-on, holds, wiped by the next cut — never fades. Keep to three or four marks on screen; more reads as a diagram rather than as thought.",
+    "maxMarks": 4
+  },
+
+  "constraints": {
+    "$comment": "Checked by the compiler, not suggestions.",
+    "castPerScene": 5,
+    "activeMemoryFiles": 6,
+    "insertBeforeUse": "any clue referenced in a `deduction` bubble must have had an `insert` shot earlier in the case",
+    "deductionChainLinks": 4,
+    "bubbleMaxLines": 3,
+    "narrationOnly": ["ch.hermes"],
+    "godsOnly": ["vanish", "manifest"],
+    "neverAvailable": ["die", "kill", "wound"]
+  }
+}
