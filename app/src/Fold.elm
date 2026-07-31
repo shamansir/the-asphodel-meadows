@@ -1,6 +1,7 @@
 module Fold exposing
     ( ActorState
     , Bubble
+    , Mark
     , Seek
     , State
     , revealed
@@ -41,8 +42,24 @@ type alias Seek =
 type alias State =
     { actors : Dict String ActorState
     , bubbles : List Bubble
+    , marks : List Mark
     , camAt : ( Float, Float )
     , camZoom : Float
+    , shot : String
+    }
+
+
+{-| An ink annotation currently on screen. `drawn` is the scratchy draw-on
+progress; a mark holds at 1 until its beat expires, and is never faded out.
+-}
+type alias Mark =
+    { kind : String
+    , at : ( Float, Float )
+    , to : ( Float, Float )
+    , r : Float
+    , label : String
+    , drawn : Float
+    , seed : String
     }
 
 
@@ -113,14 +130,16 @@ stateAt scene localT =
                     |> List.map (\a -> ( a.id, initActor a ))
                     |> Dict.fromList
             , bubbles = []
+            , marks = []
             , camAt = ( 0.5, 0.5 )
             , camZoom = 1
+            , shot = "mid"
             }
     in
     scene.beats
         |> List.filter (\b -> b.t <= localT)
         |> List.foldl (applyBeat localT) initial
-        |> (\st -> { st | bubbles = List.reverse st.bubbles })
+        |> (\st -> { st | bubbles = List.reverse st.bubbles, marks = List.reverse st.marks })
 
 
 initActor : Script.Actor -> ActorState
@@ -154,19 +173,35 @@ applyBeat localT b st0 =
                     { st0
                         | camAt = lerp2 st0.camAt c.to p
                         , camZoom = lerp st0.camZoom c.zoom p
+
+                        -- the shot type snaps rather than tweens; a cut is
+                        -- a cut
+                        , shot = c.shot
                     }
 
                 Nothing ->
                     st0
+
+        st1b =
+            case b.ann of
+                Just a ->
+                    if localT < b.t + b.dur then
+                        { st1 | marks = markFrom a (localT - b.t) :: st1.marks }
+
+                    else
+                        st1
+
+                Nothing ->
+                    st1
     in
     case b.who of
         Nothing ->
-            st1
+            st1b
 
         Just who ->
             let
                 st2 =
-                    { st1 | actors = Dict.update who (Maybe.map (applyActor b p)) st1.actors }
+                    { st1b | actors = Dict.update who (Maybe.map (applyActor b p)) st1b.actors }
             in
             case b.say of
                 Just s ->
@@ -217,6 +252,20 @@ applyActor b p a0 =
     }
 
 
+{-| Marks draw on in 0.45s and then hold. No fade — see style.md.
+-}
+markFrom : Script.Ann -> Float -> Mark
+markFrom a elapsed =
+    { kind = a.kind
+    , at = a.at
+    , to = a.to
+    , r = a.r
+    , label = a.label
+    , drawn = clamp 0 1 (elapsed / 0.45)
+    , seed = a.kind ++ String.fromFloat (Tuple.first a.at) ++ a.label
+    }
+
+
 {-| Typewriter reveal. Text finishes well before the bubble goes away, so a
 line has time to be read after it lands.
 -}
@@ -249,16 +298,21 @@ rendering — the probe checks it without a canvas.
 -}
 revealed : Bubble -> List String
 revealed b =
-    let
-        total =
-            b.lines |> List.map String.length |> List.sum |> toFloat
+    if b.kind == "deduction" then
+        -- inference arrives a whole link at a time, not letter by letter
+        List.take (ceiling (b.reveal * toFloat (List.length b.lines))) b.lines
 
-        step str ( left, acc ) =
-            ( left - String.length str, String.left left str :: acc )
-    in
-    List.foldl step ( round (b.reveal * total), [] ) b.lines
-        |> Tuple.second
-        |> List.reverse
+    else
+        let
+            total =
+                b.lines |> List.map String.length |> List.sum |> toFloat
+
+            step str ( left, acc ) =
+                ( left - String.length str, String.left left str :: acc )
+        in
+        List.foldl step ( round (b.reveal * total), [] ) b.lines
+            |> Tuple.second
+            |> List.reverse
 
 
 

@@ -107,9 +107,12 @@ scene l loc st t stepped =
                 |> List.sortBy (\( _, a ) -> Tuple.second a.pos)
     in
     List.concat
-        [ background l loc ts
+        [ background l loc st.shot ts
         , List.concatMap (\( id, a ) -> drawActor l id a ts) actors
         , List.concatMap (drawBubble l st) st.bubbles
+
+        -- ink goes over everything except the letterbox
+        , List.concatMap (drawMark l loc) st.marks
         , letterbox l
         ]
 
@@ -118,77 +121,116 @@ scene l loc st t stepped =
 -- BACKGROUND
 
 
-background : Layout -> String -> Float -> List Renderable
-background l loc t =
+{-| Three palettes that must not blend (style.md). The House is cold and
+administrative, the Fields are a pleasant endless grey-green, London is
+over-warm and always slightly wrong because it is remembered.
+-}
+type alias Palette =
+    { sky : Color
+    , band1 : Color
+    , band2 : Color
+    , far : Color
+    , mid : Color
+    , ground : Color
+    , prop : Color
+    , propTrim : Color
+    , lamp : Color
+    }
+
+
+palette : String -> Palette
+palette loc =
+    case loc of
+        -- Charon's terminal: wet slate, one sour lamp
+        "loc.bank" ->
+            { sky = Color.rgb255 42 48 58
+            , band1 = Color.rgb255 50 57 68
+            , band2 = Color.rgb255 58 66 78
+            , far = Color.rgb255 38 44 54
+            , mid = Color.rgb255 46 54 64
+            , ground = Color.rgb255 62 70 78
+            , prop = Color.rgb255 34 40 48
+            , propTrim = Color.rgb255 176 150 62
+            , lamp = Color.rgb255 226 186 92
+            }
+
+        -- the filing halls: crimson order, too many verticals
+        "loc.ledgers" ->
+            { sky = Color.rgb255 58 38 42
+            , band1 = Color.rgb255 68 44 48
+            , band2 = Color.rgb255 78 50 54
+            , far = Color.rgb255 52 34 38
+            , mid = Color.rgb255 64 40 44
+            , ground = Color.rgb255 84 56 58
+            , prop = Color.rgb255 44 28 32
+            , propTrim = Color.rgb255 168 78 76
+            , lamp = Color.rgb255 226 150 110
+            }
+
+        -- Asphodel: pleasant, endless, and that is the problem with it
+        _ ->
+            { sky = Color.rgb255 168 176 168
+            , band1 = Color.rgb255 158 168 158
+            , band2 = Color.rgb255 148 160 150
+            , far = Color.rgb255 132 146 136
+            , mid = Color.rgb255 142 156 144
+            , ground = Color.rgb255 154 168 152
+            , prop = Color.rgb255 118 134 122
+            , propTrim = Color.rgb255 138 152 138
+            , lamp = Color.rgb255 210 214 198
+            }
+
+
+background : Layout -> String -> String -> Float -> List Renderable
+background l loc shot t =
     let
-        sky =
-            [ ( 0.0, Color.rgb255 250 214 165 )
-            , ( 0.28, Color.rgb255 246 186 156 )
-            , ( 0.46, Color.rgb255 226 158 158 )
+        p =
+            palette loc
+    in
+    if shot == "insert" then
+        -- a hard cut to the clue, filling frame, on a flat ground. The clue is
+        -- the only thing in the world for a moment.
+        [ Canvas.shapes [ fill p.band2 ] [ Canvas.rect ( l.ox, l.oy ) l.boxW l.boxH ] ]
+
+    else
+        List.concat
+            [ [ Canvas.shapes [ fill p.sky ] [ Canvas.rect ( l.ox, l.oy ) l.boxW l.boxH ]
+              , Canvas.shapes [ fill p.band1 ] [ stageRect l ( 0, 0.2 ) 1 0.25 ]
+              , Canvas.shapes [ fill p.band2 ] [ stageRect l ( 0, 0.4 ) 1 0.25 ]
+              ]
+            , lamps l p loc t
+            , [ hills l p.far 0.52 0.05 (Rng.float01 (loc ++ "far"))
+              , hills l p.mid 0.63 0.07 (Rng.float01 (loc ++ "mid"))
+              , Canvas.shapes [ fill p.ground ] [ stageRect l ( 0, 0.74 ) 1 0.3 ]
+              ]
+            , scatter l p loc
             ]
 
-        band ( y0, c ) =
-            Canvas.shapes [ fill c ]
-                [ stageRect l ( 0, y0 ) 1 0.25 ]
-    in
-    List.concat
-        [ [ Canvas.shapes [ fill (Color.rgb255 250 214 165) ]
-                [ Canvas.rect ( l.ox, l.oy ) l.boxW l.boxH ]
-          ]
-        , List.map band sky
-        , [ sun l ]
-        , clouds l loc t
-        , [ hills l (Color.rgb255 176 142 168) 0.5 0.055 (Rng.float01 (loc ++ "far"))
-          , hills l (Color.rgb255 138 176 140) 0.62 0.075 (Rng.float01 (loc ++ "mid"))
-          , Canvas.shapes [ fill (Color.rgb255 158 200 148) ]
-                [ stageRect l ( 0, 0.74 ) 1 0.3 ]
-          ]
-        , scatter l loc
-        ]
 
-
-sun : Layout -> Renderable
-sun l =
-    let
-        ( x, y ) =
-            toScreen l ( 0.82, 0.16 )
-    in
-    Canvas.shapes [ fill (Color.rgb255 255 246 214) ]
-        [ Canvas.circle ( x, y ) (unit l * 0.075) ]
-
-
-clouds : Layout -> String -> Float -> List Renderable
-clouds l loc t =
+{-| The only warm thing in the House, and always slightly too orange.
+-}
+lamps : Layout -> Palette -> String -> Float -> List Renderable
+lamps l p loc t =
     let
         one i =
             let
                 seed =
-                    loc ++ "cloud" ++ String.fromInt i
+                    loc ++ "lamp" ++ String.fromInt i
 
-                y =
-                    0.08 + Rng.float01 seed * 0.18
+                ( x, y ) =
+                    toScreen l ( 0.1 + Rng.float01 seed * 0.85, 0.2 + Rng.float01 (seed ++ "y") * 0.2 )
 
-                sizeS =
-                    0.03 + Rng.float01 (seed ++ "s") * 0.03
+                -- guttering, deterministically
+                flicker =
+                    0.9 + 0.1 * sin (t * 3 + Rng.phase seed)
 
-                -- drift is a pure function of world time, so every viewer's
-                -- clouds sit in exactly the same place
-                x =
-                    fmod (Rng.float01 (seed ++ "x") + t * 0.004) 1.25 - 0.12
-
-                ( px, py ) =
-                    toScreen l ( x, y )
-
-                u =
-                    unit l
+                r =
+                    unit l * 0.02 * flicker
             in
-            Canvas.shapes [ fill (Color.rgb255 255 252 244) ]
-                [ Canvas.circle ( px, py ) (u * sizeS)
-                , Canvas.circle ( px + u * sizeS * 0.9, py + u * sizeS * 0.15 ) (u * sizeS * 0.75)
-                , Canvas.circle ( px - u * sizeS * 0.85, py + u * sizeS * 0.2 ) (u * sizeS * 0.6)
-                ]
+            Canvas.shapes [ fill p.lamp, alpha 0.85 ]
+                [ Canvas.circle ( x, y ) r ]
     in
-    List.map one (List.range 0 4)
+    List.map one (List.range 0 3)
 
 
 hills : Layout -> Color -> Float -> Float -> Float -> Renderable
@@ -231,42 +273,208 @@ hills l color baseY amp seed =
         [ Canvas.path start (segs ++ [ Canvas.lineTo endPt ]) ]
 
 
-{-| Lollipop trees and boulders. Placed by hash, so they are in the same spot
-for everyone, forever, without being listed in the script.
+{-| Set dressing, placed by hash. Same spot for everyone, forever, without
+being listed in the script.
+
+The House gets filing stacks — the horror here is procedural, so the props are
+furniture, never fire. Asphodel gets the low pale stalks it is named for.
+
 -}
-scatter : Layout -> String -> List Renderable
-scatter l loc =
+scatter : Layout -> Palette -> String -> List Renderable
+scatter l p loc =
     let
         u =
             unit l
 
-        tree i =
+        isHouse =
+            loc == "loc.bank" || loc == "loc.ledgers"
+
+        item i =
             let
                 seed =
-                    loc ++ "tree" ++ String.fromInt i
+                    loc ++ "prop" ++ String.fromInt i
 
                 x =
                     Rng.float01 seed
 
                 y =
-                    0.76 + Rng.float01 (seed ++ "y") * 0.06
+                    0.75 + Rng.float01 (seed ++ "y") * 0.05
 
                 sizeS =
-                    (0.05 + Rng.float01 (seed ++ "s") * 0.04) * u
+                    (0.05 + Rng.float01 (seed ++ "s") * 0.05) * u
 
                 ( px, py ) =
                     toScreen l ( x, y )
             in
-            [ Canvas.shapes
-                [ stroke (Color.rgb255 150 106 84), lineWidth (sizeS * 0.22), lineCap RoundCap ]
-                [ Canvas.path ( px, py )
-                    [ Canvas.quadraticCurveTo ( px + sizeS * 0.25, py - sizeS ) ( px, py - sizeS * 1.7 ) ]
+            if isHouse then
+                -- a stack of ledgers, leaning slightly, as they have for
+                -- several thousand years
+                let
+                    shelf j =
+                        Canvas.rect
+                            ( px - sizeS * 0.5 + Rng.float01 (seed ++ String.fromInt j) * sizeS * 0.12
+                            , py - sizeS * (0.35 * toFloat (j + 1))
+                            )
+                            sizeS
+                            (sizeS * 0.28)
+                in
+                [ Canvas.shapes [ fill p.prop ] (List.map shelf (List.range 0 3))
+                , Canvas.shapes [ fill p.propTrim, alpha 0.5 ]
+                    [ Canvas.rect ( px - sizeS * 0.5, py - sizeS * 0.35 ) sizeS (sizeS * 0.05) ]
                 ]
-            , Canvas.shapes [ fill (Color.rgb255 108 168 118) ]
-                [ Canvas.circle ( px, py - sizeS * 2 ) (sizeS * 0.72) ]
-            ]
+
+            else
+                [ Canvas.shapes [ stroke p.prop, lineWidth (sizeS * 0.07), lineCap RoundCap ]
+                    [ Canvas.path ( px, py )
+                        [ Canvas.quadraticCurveTo ( px + sizeS * 0.18, py - sizeS * 0.6 ) ( px, py - sizeS * 1.1 ) ]
+                    ]
+                , Canvas.shapes [ fill p.propTrim ]
+                    [ Canvas.circle ( px, py - sizeS * 1.15 ) (sizeS * 0.1) ]
+                ]
     in
-    List.concatMap tree (List.range 0 3)
+    List.concatMap item (List.range 0 5)
+
+
+
+-- INK
+
+
+{-| The `annotate` primitive. Reasoning made visible: circles, arrows and link
+lines drawn over the stage in one accent colour, hand-inked with a scratchy
+draw-on, holding until the next cut.
+
+The jitter is seeded from the mark itself, so the same wobble appears for every
+viewer — the ink is deterministic like everything else.
+
+-}
+drawMark : Layout -> String -> Fold.Mark -> List Renderable
+drawMark l loc m =
+    let
+        u =
+            unit l
+
+        accent =
+            if loc == "loc.ledgers" then
+                Color.rgb255 250 214 120
+
+            else
+                Color.rgb255 246 128 92
+
+        pen =
+            [ stroke accent, lineWidth (u * 0.006), lineCap RoundCap, lineJoin RoundJoin ]
+
+        -- deterministic hand-wobble
+        jit i amp =
+            (Rng.float01 (m.seed ++ String.fromInt i) - 0.5) * amp * u
+
+        ( ax, ay ) =
+            toScreen l m.at
+
+        ( bx, by ) =
+            toScreen l m.to
+
+        labelAt x y =
+            if m.label == "" then
+                []
+
+            else
+                [ Canvas.text
+                    [ font { size = round (u * 0.026), family = "'Comic Sans MS', 'Chalkboard SE', cursive" }
+                    , align Center
+                    , baseLine Middle
+                    , fill accent
+                    ]
+                    ( x, y )
+                    m.label
+                ]
+
+        shape =
+            case m.kind of
+                "arrow" ->
+                    let
+                        hx =
+                            ax + (bx - ax) * m.drawn
+
+                        hy =
+                            ay + (by - ay) * m.drawn
+
+                        ang =
+                            atan2 (by - ay) (bx - ax)
+
+                        head d =
+                            Canvas.path ( hx, hy )
+                                [ Canvas.lineTo
+                                    ( hx - cos (ang + d) * u * 0.03
+                                    , hy - sin (ang + d) * u * 0.03
+                                    )
+                                ]
+                    in
+                    [ Canvas.path ( ax, ay )
+                        [ Canvas.quadraticCurveTo
+                            ( (ax + bx) / 2 + jit 1 0.05, (ay + by) / 2 + jit 2 0.05 )
+                            ( hx, hy )
+                        ]
+                    ]
+                        ++ (if m.drawn > 0.85 then
+                                [ head 0.5, head -0.5 ]
+
+                            else
+                                []
+                           )
+
+                "link" ->
+                    [ Canvas.path ( ax, ay )
+                        [ Canvas.lineTo
+                            ( ax + (bx - ax) * m.drawn + jit 3 0.02
+                            , ay + (by - ay) * m.drawn + jit 4 0.02
+                            )
+                        ]
+                    ]
+
+                "strike" ->
+                    [ Canvas.path ( ax - u * m.r, ay )
+                        [ Canvas.lineTo ( ax - u * m.r + 2 * u * m.r * m.drawn, ay + jit 5 0.02 ) ]
+                    ]
+
+                "label" ->
+                    [ Canvas.path ( ax, ay ) [ Canvas.lineTo ( ax, ay - u * 0.05 * m.drawn ) ] ]
+
+                _ ->
+                    -- circle: an overrun ellipse, drawn a little past its own
+                    -- start the way a person does it
+                    let
+                        n =
+                            18
+
+                        sweep =
+                            m.drawn * 2 * pi * 1.12
+
+                        pt i =
+                            let
+                                a =
+                                    sweep * toFloat i / toFloat n
+                            in
+                            ( ax + cos a * u * m.r * 1.25 + jit i 0.012
+                            , ay + sin a * u * m.r + jit (i + 40) 0.012
+                            )
+                    in
+                    [ Canvas.path (pt 0) (List.map (pt >> Canvas.lineTo) (List.range 1 n)) ]
+    in
+    Canvas.shapes pen shape
+        :: (if m.drawn > 0.9 then
+                case m.kind of
+                    "label" ->
+                        labelAt ax (ay - u * 0.085)
+
+                    "circle" ->
+                        labelAt ax (ay - u * (m.r + 0.05))
+
+                    _ ->
+                        labelAt ((ax + bx) / 2) ((ay + by) / 2 - u * 0.035)
+
+            else
+                []
+           )
 
 
 letterbox : Layout -> List Renderable
@@ -298,22 +506,54 @@ type alias CharDef =
 charDef : String -> CharDef
 charDef id =
     case id of
-        "ch.pib" ->
-            { body = Color.rgb255 116 196 214
-            , trim = Color.rgb255 64 142 168
-            , height = 0.20
-            , girth = 0.62
-            , limb = 0.055
-            , topper = "tuft"
+        -- All verticals in a world of curves. The only unsaturated figure in
+        -- the cast, which is the composition of the whole season.
+        "ch.holmes" ->
+            { body = Color.rgb255 96 100 112
+            , trim = Color.rgb255 54 58 70
+            , height = 0.30
+            , girth = 0.26
+            , limb = 0.034
+            , topper = "none"
             }
 
-        "ch.wobb" ->
-            { body = Color.rgb255 240 176 96
-            , trim = Color.rgb255 196 122 58
-            , height = 0.31
+        -- The noodliest rig. Even his idle has motion.
+        "ch.hermes" ->
+            { body = Color.rgb255 234 206 138
+            , trim = Color.rgb255 186 150 74
+            , height = 0.19
+            , girth = 0.42
+            , limb = 0.052
+            , topper = "wings"
+            }
+
+        -- Tallest, and never straightened. Everything about him is damp.
+        "ch.charon" ->
+            { body = Color.rgb255 86 96 100
+            , trim = Color.rgb255 178 156 66
+            , height = 0.34
+            , girth = 0.30
+            , limb = 0.038
+            , topper = "hood"
+            }
+
+        -- Tight where the others are loose: permanently braced.
+        "ch.minos" ->
+            { body = Color.rgb255 164 66 72
+            , trim = Color.rgb255 104 36 44
+            , height = 0.25
+            , girth = 0.46
+            , limb = 0.046
+            , topper = "none"
+            }
+
+        "ch.persephone" ->
+            { body = Color.rgb255 120 172 112
+            , trim = Color.rgb255 206 172 76
+            , height = 0.26
             , girth = 0.34
-            , limb = 0.042
-            , topper = "antenna"
+            , limb = 0.040
+            , topper = "tuft"
             }
 
         _ ->
@@ -363,6 +603,33 @@ poseOf name =
 
         "crouch" ->
             { armL = 60, armR = 60, bendL = 0.8, bendR = -0.8, spread = 0.9, tilt = 0, squash = 0.7 }
+
+        -- Holmes thinking. Fingertips together, elbows out, nothing else moving.
+        "steeple" ->
+            { armL = 44, armR = 44, bendL = 1.8, bendR = -1.8, spread = 0.4, tilt = 0, squash = 1.02 }
+
+        -- Hades behind a desk that is too large, at the end of a very long day.
+        "lounge" ->
+            { armL = 74, armR = 58, bendL = 0.9, bendR = -0.6, spread = 1.3, tilt = 4, squash = 0.72 }
+
+        "seated" ->
+            { armL = 30, armR = 30, bendL = 0.5, bendR = -0.5, spread = 1.5, tilt = 0, squash = 0.66 }
+
+        -- bent to the evidence
+        "stoop" ->
+            { armL = 34, armR = 62, bendL = 0.5, bendR = -0.9, spread = 0.6, tilt = 22, squash = 0.9 }
+
+        "loom" ->
+            { armL = 40, armR = 40, bendL = 0.7, bendR = -0.7, spread = 0.75, tilt = 9, squash = 1.12 }
+
+        "reach" ->
+            { armL = 12, armR = 92, bendL = 0.2, bendR = -0.2, spread = 0.5, tilt = -4, squash = 1.03 }
+
+        "hide" ->
+            { armL = 150, armR = 150, bendL = -1.1, bendR = 1.1, spread = 0.3, tilt = 0, squash = 0.82 }
+
+        "flail" ->
+            { armL = 120, armR = 120, bendL = 1.2, bendR = -1.2, spread = 0.9, tilt = 0, squash = 1.05 }
 
         _ ->
             -- idle
@@ -593,6 +860,33 @@ topper _ def h =
                     [ Canvas.quadraticCurveTo ( -headR * 0.1, headY - headR * 1.6 ) ( headR * 0.35, headY - headR * 1.25 ) ]
                 ]
 
+        -- two restless scribbles, one either side of the head
+        "wings" ->
+            let
+                wing dir =
+                    Canvas.path ( dir * headR * 0.85, headY - headR * 0.1 )
+                        [ Canvas.quadraticCurveTo
+                            ( dir * headR * 2.1, headY - headR * 1.0 )
+                            ( dir * headR * 1.5, headY - headR * 0.55 )
+                        , Canvas.quadraticCurveTo
+                            ( dir * headR * 2.2, headY - headR * 0.2 )
+                            ( dir * headR * 1.3, headY + headR * 0.05 )
+                        ]
+            in
+            Canvas.shapes [ stroke def.trim, lineWidth (h * 0.016), lineCap RoundCap ]
+                [ wing -1, wing 1 ]
+
+        -- sits behind the head and larger than it, so the silhouette reads as
+        -- a cowl framing a face rather than as a hat sitting on one
+        "hood" ->
+            Canvas.shapes [ fill (Color.rgb255 44 52 56) ]
+                [ Canvas.path ( -headR * 1.15, headY + headR * 0.5 )
+                    [ Canvas.quadraticCurveTo ( -headR * 1.3, headY - headR * 1.6 ) ( 0, headY - headR * 1.45 )
+                    , Canvas.quadraticCurveTo ( headR * 1.3, headY - headR * 1.6 ) ( headR * 1.15, headY + headR * 0.5 )
+                    , Canvas.quadraticCurveTo ( 0, headY + headR * 0.1 ) ( -headR * 1.15, headY + headR * 0.5 )
+                    ]
+                ]
+
         _ ->
             Canvas.shapes [] []
 
@@ -637,6 +931,18 @@ faceOf expr =
 
         "tired" ->
             { eyeOpen = 0.3, eyeR = 1, pupilX = 0, pupilY = 0.1, brow = 8, browY = 0.12, curve = -0.2, mouthW = 0.9, open = 0 }
+
+        -- looking anywhere else
+        "bored" ->
+            { eyeOpen = 0.45, eyeR = 1, pupilX = 0.35, pupilY = 0.2, brow = 4, browY = 0.14, curve = -0.1, mouthW = 0.85, open = 0 }
+
+        -- the punctuation at the end of a chain: it lands on a face, not in a
+        -- bubble
+        "dawning" ->
+            { eyeOpen = 1.3, eyeR = 1.15, pupilX = 0, pupilY = 0, brow = 14, browY = 0.36, curve = 0.2, mouthW = 0.65, open = 0.35 }
+
+        "withering" ->
+            { eyeOpen = 0.35, eyeR = 1, pupilX = 0.2, pupilY = 0, brow = -14, browY = 0.1, curve = -0.35, mouthW = 0.8, open = 0 }
 
         _ ->
             { eyeOpen = 1, eyeR = 1, pupilX = 0, pupilY = 0, brow = 0, browY = 0.18, curve = 0.15, mouthW = 1, open = 0 }
@@ -729,81 +1035,253 @@ browser never calls measureText, so bubbles are identical everywhere.
 -}
 drawBubble : Layout -> State -> Bubble -> List Renderable
 drawBubble l st b =
-    case Dict.get b.who st.actors of
-        Nothing ->
-            []
+    if b.kind == "narration" then
+        -- Hermes only, and it belongs to the frame rather than to him
+        narration l b
 
-        Just a ->
-            let
-                u =
-                    unit l
+    else if b.kind == "deduction" then
+        -- Also frame-anchored, for two reasons. It is a different register of
+        -- speech — the machine running, not a person talking. And a deduction
+        -- almost always plays over an `insert`, where the speaker is not in
+        -- shot at all.
+        deduction l b
 
-                -- authored against a 720px-high reference stage
-                s =
-                    u / 720
+    else
+        case Dict.get b.who st.actors of
+            Nothing ->
+                []
 
-                bw =
-                    b.w * s
+            Just a ->
+                speech l b a
 
-                bh =
-                    b.h * s
 
-                ( fx, fy ) =
-                    toScreen l a.pos
+ink : Color
+ink =
+    Color.rgb255 26 22 30
 
-                headTop =
-                    fy - (charDef b.who).height * u * 1.08
 
-                cx =
-                    fx + a.facing * bw * 0.22
+{-| A hard rectangle at the top of the frame, no tail. It is the chronicle
+speaking, not a person in the room.
+-}
+narration : Layout -> Bubble -> List Renderable
+narration l b =
+    let
+        s =
+            unit l / 720
 
-                cy =
-                    headTop - bh * 0.6
+        bw =
+            min (l.boxW * 0.72) (b.w * s * 1.15)
 
-                fontPx =
-                    round (22 * s)
+        bh =
+            b.h * s
 
-                shown =
-                    Fold.revealed b
+        x =
+            l.ox + (l.boxW - bw) / 2
 
-                lineH =
-                    26 * s
+        y =
+            l.oy + l.boxH * 0.045
 
-                top =
-                    cy - (toFloat (List.length b.lines) - 1) * lineH / 2
+        lineH =
+            26 * s
+    in
+    [ Canvas.shapes [ fill (Color.rgb255 244 240 230), alpha 0.95 ]
+        [ Canvas.rect ( x, y ) bw bh ]
+    , Canvas.shapes [ stroke ink, lineWidth (2.5 * s) ]
+        [ Canvas.rect ( x, y ) bw bh ]
+    ]
+        ++ List.indexedMap
+            (\i str ->
+                Canvas.text
+                    [ font { size = round (20 * s), family = "'Comic Sans MS', 'Chalkboard SE', cursive" }
+                    , align Left
+                    , baseLine Middle
+                    , fill ink
+                    ]
+                    ( x + 14 * s, y + bh / 2 - (toFloat (List.length b.lines) - 1) * lineH / 2 + toFloat i * lineH )
+                    str
+            )
+            (Fold.revealed b)
 
-                textLine i str =
+
+{-| A ruled box, low and left, in a different typeface. Not a balloon: this is
+the chain of inference, and it reveals a whole link at a time (Fold.revealed).
+-}
+deduction : Layout -> Bubble -> List Renderable
+deduction l b =
+    let
+        s =
+            unit l / 720
+
+        bw =
+            b.w * s
+
+        bh =
+            b.h * s
+
+        x =
+            l.ox + l.boxW * 0.055
+
+        y =
+            l.oy + l.boxH * 0.97 - bh
+
+        lineH =
+            26 * s
+    in
+    [ Canvas.shapes [ fill (Color.rgb255 250 248 242), alpha 0.97 ]
+        [ Canvas.rect ( x, y ) bw bh ]
+    , Canvas.shapes [ stroke ink, lineWidth (1.2 * s) ]
+        [ Canvas.rect ( x, y ) bw bh ]
+
+    -- the left margin rule, as on a ledger
+    , Canvas.shapes [ stroke (Color.rgb255 190 120 96), lineWidth (1.2 * s) ]
+        [ Canvas.path ( x + 16 * s, y ) [ Canvas.lineTo ( x + 16 * s, y + bh ) ] ]
+    ]
+        ++ List.indexedMap
+            (\i str ->
+                Canvas.text
+                    [ font { size = round (19 * s), family = "'Courier New', ui-monospace, monospace" }
+                    , align Left
+                    , baseLine Middle
+                    , fill ink
+                    ]
+                    ( x + 26 * s, y + 22 * s + toFloat i * lineH )
+                    str
+            )
+            (Fold.revealed b)
+
+
+speech : Layout -> Bubble -> Fold.ActorState -> List Renderable
+speech l b a =
+    let
+        u =
+            unit l
+
+        -- authored against a 720px-high reference stage
+        s =
+            u / 720
+
+        bw =
+            b.w * s
+
+        bh =
+            b.h * s
+
+        ( fx, fy ) =
+            toScreen l a.pos
+
+        headTop =
+            fy - (charDef b.who).height * u * 1.08
+
+        cx =
+            fx + a.facing * bw * 0.22
+
+        cy =
+            headTop - bh * 0.6
+
+        shown =
+            Fold.revealed b
+
+        lineH =
+            26 * s
+
+        tail =
+            Canvas.path ( cx - bw * 0.1, cy + bh * 0.4 )
+                [ Canvas.lineTo ( cx + bw * 0.06, cy + bh * 0.42 )
+                , Canvas.lineTo ( fx + a.facing * u * 0.02, headTop - u * 0.01 )
+                , Canvas.lineTo ( cx - bw * 0.1, cy + bh * 0.4 )
+                ]
+
+        centred fam size col =
+            List.indexedMap
+                (\i str ->
                     Canvas.text
-                        [ font { size = fontPx, family = "'Comic Sans MS', 'Chalkboard SE', 'Marker Felt', cursive" }
+                        [ font { size = round (size * s), family = fam }
                         , align Center
                         , baseLine Middle
-                        , fill (Color.rgb255 26 22 30)
+                        , fill col
                         ]
-                        ( cx, top + toFloat i * lineH )
+                        ( cx, cy - (toFloat (List.length b.lines) - 1) * lineH / 2 + toFloat i * lineH )
                         str
+                )
+                shown
 
-                tail =
-                    Canvas.path ( cx - bw * 0.1, cy + bh * 0.4 )
-                        [ Canvas.lineTo ( cx + bw * 0.06, cy + bh * 0.42 )
-                        , Canvas.lineTo ( fx + a.facing * u * 0.02, headTop - u * 0.01 )
-                        , Canvas.lineTo ( cx - bw * 0.1, cy + bh * 0.4 )
-                        ]
+        comic =
+            "'Comic Sans MS', 'Chalkboard SE', 'Marker Felt', cursive"
 
-                outline =
-                    if b.kind == "thought" then
-                        Color.rgb255 120 116 130
-
-                    else
-                        Color.rgb255 26 22 30
-            in
-            [ Canvas.shapes [ fill Color.white ]
-                [ tail, ellipse ( cx, cy ) (bw / 2) (bh / 2) ]
-            , Canvas.shapes [ stroke outline, lineWidth (3 * s), lineJoin RoundJoin ]
-                [ ellipse ( cx, cy ) (bw / 2) (bh / 2) ]
-            , Canvas.shapes [ stroke outline, lineWidth (3 * s), lineJoin RoundJoin ] [ tail ]
+        balloon shape lw col =
+            [ Canvas.shapes [ fill Color.white ] [ tail, shape ]
+            , Canvas.shapes [ stroke col, lineWidth (lw * s), lineJoin RoundJoin ] [ shape ]
+            , Canvas.shapes [ stroke col, lineWidth (lw * s), lineJoin RoundJoin ] [ tail ]
             , Canvas.shapes [ fill Color.white ] [ tail ]
             ]
-                ++ List.indexedMap textLine shown
+    in
+    case b.kind of
+        "shout" ->
+            balloon (spiked ( cx, cy ) (bw / 2) (bh / 2) b.who) 4 ink
+                ++ centred comic 26 ink
+
+        "whisper" ->
+            [ Canvas.shapes [ fill Color.white, alpha 0.82 ]
+                [ ellipse ( cx, cy ) (bw / 2) (bh / 2) ]
+            , Canvas.shapes [ stroke (Color.rgb255 150 146 158), lineWidth (1.4 * s) ]
+                [ ellipse ( cx, cy ) (bw / 2) (bh / 2) ]
+            ]
+                ++ centred comic 18 (Color.rgb255 90 86 98)
+
+        "thought" ->
+            let
+                lobes =
+                    List.range 0 8
+                        |> List.map
+                            (\i ->
+                                let
+                                    ang =
+                                        2 * pi * toFloat i / 9
+                                in
+                                Canvas.circle
+                                    ( cx + cos ang * bw * 0.47, cy + sin ang * bh * 0.47 )
+                                    (bh * 0.2)
+                            )
+
+                trail =
+                    [ Canvas.circle ( cx - bw * 0.18, cy + bh * 0.72 ) (bh * 0.1)
+                    , Canvas.circle ( cx - bw * 0.28, cy + bh * 0.98 ) (bh * 0.06)
+                    ]
+            in
+            [ Canvas.shapes [ fill Color.white ] (ellipse ( cx, cy ) (bw / 2) (bh / 2) :: lobes ++ trail)
+            , Canvas.shapes [ stroke (Color.rgb255 120 116 130), lineWidth (2 * s) ] (lobes ++ trail)
+            ]
+                ++ centred comic 22 ink
+
+        _ ->
+            balloon (ellipse ( cx, cy ) (bw / 2) (bh / 2)) 3 ink
+                ++ centred comic 22 ink
+
+
+{-| A shout balloon: the same ellipse, spiked. Alternating radii, jittered
+deterministically so no two shouts are quite the same shape.
+-}
+spiked : ( Float, Float ) -> Float -> Float -> String -> Shape
+spiked ( cx, cy ) rx ry seed =
+    let
+        n =
+            20
+
+        pt i =
+            let
+                ang =
+                    2 * pi * toFloat i / toFloat n
+
+                k =
+                    if modBy 2 i == 0 then
+                        1.0
+
+                    else
+                        1.22 + Rng.float01 (seed ++ String.fromInt i) * 0.14
+            in
+            ( cx + cos ang * rx * k, cy + sin ang * ry * k )
+    in
+    Canvas.path (pt 0) (List.map (pt >> Canvas.lineTo) (List.range 1 n))
 
 
 {-| Four beziers. `Canvas.circle` inside a scaled group would work too, but the

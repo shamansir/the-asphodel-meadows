@@ -1,5 +1,6 @@
 module Script exposing
     ( Actor
+    , Ann
     , Beat
     , Cam
     , Chunk
@@ -66,6 +67,22 @@ type alias Beat =
     , face : Maybe Float
     , say : Maybe Say
     , cam : Maybe Cam
+    , ann : Maybe Ann
+    }
+
+
+{-| An ink mark drawn *over* the stage — the `annotate` primitive (§4.3).
+
+This is how reasoning is rendered rather than merely spoken. A mark holds for
+its duration and is wiped by the next cut; it never fades.
+
+-}
+type alias Ann =
+    { kind : String -- circle | arrow | link | label | strike
+    , at : ( Float, Float )
+    , to : ( Float, Float )
+    , r : Float
+    , label : String
     }
 
 
@@ -83,6 +100,7 @@ type alias Say =
 type alias Cam =
     { to : ( Float, Float )
     , zoom : Float
+    , shot : String -- wide | mid | close | insert
     }
 
 
@@ -133,6 +151,17 @@ beat =
         |> andMap (D.maybe (D.field "face" D.float))
         |> andMap (D.maybe (D.field "say" say))
         |> andMap (D.maybe (D.field "cam" cam))
+        |> andMap (D.maybe (D.field "ann" ann))
+
+
+ann : Decoder Ann
+ann =
+    D.map5 Ann
+        (D.field "kind" D.string)
+        (D.field "at" point)
+        (optional "to" point ( 0, 0 ))
+        (optional "r" D.float 0.05)
+        (optional "label" D.string "")
 
 
 say : Decoder Say
@@ -146,9 +175,10 @@ say =
 
 cam : Decoder Cam
 cam =
-    D.map2 Cam
+    D.map3 Cam
         (D.field "to" point)
         (optional "zoom" D.float 1)
+        (optional "shot" D.string "mid")
 
 
 point : Decoder ( Float, Float )

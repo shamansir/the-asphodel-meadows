@@ -49,6 +49,18 @@ adjacent frames — the failure you get if a beat is ever treated as a delta).
   fast-forward.
 - `←` a few times, then `L`. That is §13 rewind, in full.
 
+## What is playing
+
+`demo-world/chunk.json` is **Case 001, *The Second Obol*** — five scenes, 8m50s, looping.
+Charon's fare box holds one coin too many. Written up in `demo-world/case-001.md`.
+
+It exercises the deduction grammar end to end: `insert` shots on a flat ground, ink
+annotations drawn over the stage, ruled `deduction` boxes that reveal a link at a time,
+and `dawning` on the listener's face. Also `narration` boxes, which only Hermes gets.
+
+Worth catching: the wrong idea in scene 3, Charon's line in scene 5, and the last word of
+the case.
+
 ## What is real and what is placeholder
 
 **Real** — the clock, `Fold`, seek, skew correction, keyframe semantics, deterministic
@@ -63,9 +75,12 @@ real client walks a manifest and never wraps.
 
 ## Known rough edges
 
-- The loop seam is visible: scene 3 ends with the cast scattered and scene 1 restarts
-  them at their opening marks. Real chunks carry position continuity across the boundary
-  (the compiler checks it, §8).
+- The loop seam is visible: the last scene ends with the cast scattered and the first
+  restarts them at their opening marks. Real chunks carry position continuity across the
+  boundary (the compiler checks it, §8).
+- `insert` shots frame an empty region of the stage and draw the clue purely in ink,
+  because there is no prop rendering yet. It reads as a diagram, which suits a detective
+  story, but a real insert should have an object in it.
 - Poses outlive the acts that accompany them — an actor left in `handsUp` stays that way
   until a later beat says otherwise. That is correct keyframe behaviour and an authoring
   lesson for the writer prompt, not a bug.
