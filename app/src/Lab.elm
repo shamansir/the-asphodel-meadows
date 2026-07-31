@@ -24,6 +24,7 @@ import Dict
 import Fold
 import Html exposing (Html, button, div, span, text)
 import Html.Attributes exposing (style)
+import Html.Lazy
 import Html.Events exposing (onClick)
 import Http
 import Json.Decode as D
@@ -55,6 +56,8 @@ type alias Model =
     , t : Float
     , size : ( Float, Float )
     , error : Maybe String
+    , bgKey : String
+    , bg : List Canvas.Renderable
     }
 
 
@@ -103,6 +106,8 @@ init _ =
       , t = 0
       , size = ( 1280, 720 )
       , error = Nothing
+      , bgKey = ""
+      , bg = []
       }
     , Cmd.batch
         [ Http.get { url = "/bible/vocabulary.json", expect = Http.expectJson GotVocab vocabDecoder }
@@ -129,10 +134,10 @@ update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         Tick dt ->
-            ( { model | t = model.t + dt }, Cmd.none )
+            ( refreshBackground { model | t = model.t + dt }, Cmd.none )
 
         Resized w h ->
-            ( { model | size = ( w, h ) }, Cmd.none )
+            ( refreshBackground { model | size = ( w, h ) }, Cmd.none )
 
         GotVocab (Ok v) ->
             ( { model | vocab = v }, Cmd.none )
@@ -144,7 +149,7 @@ update msg model =
             ( { model | who = id }, Cmd.none )
 
         SetLoc loc ->
-            ( { model | loc = loc }, Cmd.none )
+            ( refreshBackground { model | loc = loc }, Cmd.none )
 
         SetPose p ->
             -- keep the old pose around so the blend is visible rather than a snap
@@ -157,6 +162,27 @@ update msg model =
             -- acts are momentary by design: they run, then the character
             -- settles back to its pose on its own
             ( { model | act = a, actUntil = model.t + 6 }, Cmd.none )
+
+
+{-| Same background cache as the show: see Main.refreshBackground.
+-}
+refreshBackground : Model -> Model
+refreshBackground model =
+    let
+        st =
+            stateOf model
+
+        l =
+            Render.layout model.size st
+
+        key =
+            Render.bgKey l model.loc st.shot
+    in
+    if key == model.bgKey then
+        model
+
+    else
+        { model | bgKey = key, bg = Render.backgroundStatic l model.loc st.shot }
 
 
 subscriptions : Model -> Sub Msg
@@ -210,11 +236,24 @@ view model =
     in
     div
         [ style "position" "fixed", style "inset" "0", style "background" "#16141c" ]
-        [ Canvas.toHtml ( round w, round h )
-            [ style "display" "block" ]
-            (Render.scene l model.loc st model.t { stepped = True, plates = True })
+        [ div
+            [ style "position" "absolute", style "inset" "0", style "overflow" "hidden" ]
+            [ div
+                [ style "transform-origin" "0 0", style "transform" (Render.cameraCss l) ]
+                [ Html.Lazy.lazy3 backdrop (round w) (round h) model.bg ]
+            ]
+        , div [ style "position" "absolute", style "inset" "0" ]
+            [ Canvas.toHtml ( round w, round h )
+                [ style "display" "block" ]
+                (Render.scene l model.loc st model.t { stepped = True, plates = True })
+            ]
         , panel model
         ]
+
+
+backdrop : Int -> Int -> List Canvas.Renderable -> Html msg
+backdrop w h items =
+    Canvas.toHtml ( w, h ) [ style "display" "block" ] items
 
 
 panel : Model -> Html Msg

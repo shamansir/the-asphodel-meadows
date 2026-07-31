@@ -1,4 +1,4 @@
-module Render exposing (Layout, layout, scene)
+module Render exposing (Layout, backgroundStatic, bgKey, cameraCss, layout, scene)
 
 {-| Canvas rendering for the clock spike.
 
@@ -19,7 +19,7 @@ hardcoded here only because the spike has no asset pipeline yet.
 -}
 
 import Canvas exposing (Renderable, Shape)
-import Canvas.Settings exposing (fill, stroke)
+import Canvas.Settings exposing (Setting, fill, stroke)
 import Canvas.Settings.Advanced exposing (alpha, rotate, scale, transform, translate)
 import Canvas.Settings.Line exposing (LineCap(..), LineJoin(..), lineCap, lineJoin, lineWidth)
 import Canvas.Settings.Text exposing (TextAlign(..), TextBaseLine(..), align, baseLine, font)
@@ -124,7 +124,19 @@ scene l loc st t opts =
                 []
     in
     List.concat
-        [ background l loc st.shot ts
+        [ -- Wipe the frame. This used to happen for free: the background fill
+          -- covered the whole canvas every frame. Once the background moved to
+          -- its own layer nothing was painting over the previous frame, and
+          -- the characters smeared across the stage.
+          [ Canvas.clear ( 0, 0 ) l.w l.h ]
+
+        -- The background lives on its own canvas underneath (see cameraCss).
+        -- Only the lamps stay here, because they gutter.
+        , if st.shot == "insert" then
+            []
+
+          else
+            [ Canvas.group (cameraXf l) (lamps (identityLayout l) (palette loc) loc ts) ]
         , List.concatMap (\( id, a ) -> drawActor l id a ts) actors
         , plates
         , List.concatMap (drawBubble l st) st.bubbles
@@ -345,16 +357,16 @@ sunAngle =
     degrees -58
 
 
-{-| A single tapered brush stroke: wide at the shadow end, drawn to a point at
-the end nearest the sun.
+{-| A single hatch mark: a hard triangle, base across the light axis, apex
+pointing toward the sun.
 
-Canvas has no variable-width stroke, so this is a filled lens rather than a
-stroked line — two quadratics bowed apart at the root, meeting at the tip. The
-bow is what keeps it a brush rather than a ruler.
+Straight edges and a real point, not the bowed lens this used to be — that read
+as fingernails at density. Reference is sphere 3 of the standard shading chart:
+bold wedges anchored on the dark rim, radiating toward the light.
 
 -}
-hatchStroke : ( Float, Float ) -> Float -> Float -> Float -> Shape
-hatchStroke ( x, y ) len w0 bow =
+hatchStroke : ( Float, Float ) -> Float -> Float -> Shape
+hatchStroke ( x, y ) len w0 =
     let
         ( dx, dy ) =
             ( cos sunAngle, sin sunAngle )
@@ -362,71 +374,246 @@ hatchStroke ( x, y ) len w0 bow =
         ( nx, ny ) =
             ( -dy, dx )
 
-        ( mx, my ) =
-            ( x + dx * len * 0.45 + nx * bow, y + dy * len * 0.45 + ny * bow )
+        corner k =
+            ( x + nx * w0 * k, y + ny * w0 * k )
     in
-    Canvas.path ( x + nx * w0 * 0.5, y + ny * w0 * 0.5 )
-        [ Canvas.quadraticCurveTo ( mx + nx * w0 * 0.3, my + ny * w0 * 0.3 )
-            ( x + dx * len, y + dy * len )
-        , Canvas.quadraticCurveTo ( mx - nx * w0 * 0.3, my - ny * w0 * 0.3 )
-            ( x - nx * w0 * 0.5, y - ny * w0 * 0.5 )
+    Canvas.path (corner 0.5)
+        [ Canvas.lineTo ( x + dx * len, y + dy * len )
+        , Canvas.lineTo (corner -0.5)
+        , Canvas.lineTo (corner 0.5)
         ]
 
 
-{-| Scatter tapered strokes through a horizontal slice of the stage.
+{-| A hatchable area: a bounding box in stage coordinates plus a containment
+test.
 
-`shade` scales length and weight together, so a darker band gets longer heavier
-strokes rather than merely more of them — which is how a pen actually darkens
-an area.
-
-Placement is hashed from the location name, so the hatching is identical for
-every viewer and never crawls between frames.
+Every background shape we author is either a rectangle or "everything below a
+curve", so containment is a couple of comparisons. That is what makes clipping
+possible at all: `elm-canvas` exposes no `clip()`, and composite-op masking
+would erase the background already painted, because composite modes apply to
+the whole canvas rather than to a layer.
 
 -}
-hatchBand : Layout -> Color -> String -> Float -> Float -> Int -> Int -> Float -> Renderable
-hatchBand l col seed y0 y1 cols rows shade =
+type alias Region =
+    { x0 : Float
+    , x1 : Float
+    , y0 : Float
+    , y1 : Float
+    , inside : ( Float, Float ) -> Bool
+    }
+
+
+rectRegion : Float -> Float -> Float -> Float -> Region
+rectRegion x0 y0 x1 y1 =
+    { x0 = x0
+    , x1 = x1
+    , y0 = y0
+    , y1 = y1
+    , inside = \( x, y ) -> x >= x0 && x <= x1 && y >= y0 && y <= y1
+    }
+
+
+hillRegion : String -> Float -> Float -> Float -> Region
+hillRegion seed baseY amp bottom =
+    let
+        ridge =
+            hillY seed baseY amp
+    in
+    { x0 = 0
+    , x1 = 1
+    , y0 = baseY - amp
+    , y1 = bottom
+    , inside = \( x, y ) -> y >= ridge x && y <= bottom
+    }
+
+
+{-| Screen point back to stage coordinates: the inverse of `toScreen`, so a
+stroke can be marched in screen space and tested in stage space.
+-}
+toStage : Layout -> ( Float, Float ) -> ( Float, Float )
+toStage l ( px, py ) =
+    ( (px - l.ox - l.boxW / 2) / (l.boxW * l.zoom) + l.camX
+    , (py - l.oy - l.boxH / 2) / (l.boxH * l.zoom) + l.camY
+    )
+
+
+{-| Rule a region with triangular hatch marks, anchored to its edge and clipped
+to its outline.
+
+Three things happen per mark. Placement is a **jittered lattice** — pure
+randomness clumps and leaves bald patches, and ruling has to cover evenly to
+read as shading rather than debris. The base is then **snapped backwards onto
+the shadow-side boundary** when one is within reach, which is what produces the
+row of wedges standing on the rim in sphere 3 rather than marks floating near
+it. Finally the length is **marched forward and cut at the far boundary**, so
+nothing crosses an edge in either direction, drawn or not.
+
+-}
+hatchRegion : Layout -> Color -> String -> Region -> Int -> Int -> Float -> Renderable
+hatchRegion l col seed region cols rows shade =
     let
         u =
             unit l
 
-        -- A jittered lattice, not a random scatter. Pure randomness clumps and
-        -- leaves bald patches; ruling has to cover evenly to read as shading
-        -- rather than as debris. The jitter is what keeps it off a grid.
+        step =
+            u * 0.006
+
+        ( dx, dy ) =
+            ( cos sunAngle, sin sunAngle )
+
+        at ( sx, sy ) d =
+            ( sx + dx * d, sy + dy * d )
+
+        -- march until the region ends, up to `want`
+        run sign want from =
+            let
+                walk n =
+                    let
+                        travelled =
+                            toFloat n * step
+                    in
+                    if travelled >= want then
+                        want
+
+                    else if region.inside (toStage l (at from (sign * travelled))) then
+                        walk (n + 1)
+
+                    else
+                        travelled - step
+            in
+            max 0 (walk 1)
+
         one r c =
             let
                 sd =
                     seed ++ String.fromInt r ++ "x" ++ String.fromInt c
 
-                jx =
-                    (Rng.float01 sd - 0.5) * 0.85
+                jit k amp =
+                    (Rng.float01 (sd ++ k) - 0.5) * amp
 
-                jy =
-                    (Rng.float01 (sd ++ "j") - 0.5) * 0.85
-            in
-            hatchStroke
-                (toScreen l
-                    ( ((toFloat c + 0.5 + jx) / toFloat cols) * 1.3 - 0.15
-                    , y0 + ((toFloat r + 0.5 + jy) / toFloat rows) * (y1 - y0)
+                stage =
+                    ( region.x0 + ((toFloat c + 0.5 + jit "" 0.85) / toFloat cols) * (region.x1 - region.x0)
+                    , region.y0 + ((toFloat r + 0.5 + jit "j" 0.85) / toFloat rows) * (region.y1 - region.y0)
                     )
-                )
-                (u * (0.018 + Rng.float01 (sd ++ "l") * 0.022) * shade)
-                (u * (0.002 + Rng.float01 (sd ++ "w") * 0.0035) * shade)
-                (u * (Rng.float01 (sd ++ "b") - 0.5) * 0.02)
+
+                want =
+                    u * (0.016 + Rng.float01 (sd ++ "l") * 0.020) * shade
+
+                screen =
+                    toScreen l stage
+
+                -- stand the mark on the shadow edge if it is close enough
+                base =
+                    at screen (negate (run -1 (want * 0.55) screen))
+
+                len =
+                    run 1 want base
+            in
+            if not (region.inside stage) || len < u * 0.005 then
+                Nothing
+
+            else
+                Just
+                    (hatchStroke base
+                        len
+                        (u * (0.0022 + Rng.float01 (sd ++ "w") * 0.0032) * shade)
+                    )
     in
-    Canvas.shapes [ fill col, alpha 0.4 ]
+    Canvas.shapes [ fill col, alpha 0.42 ]
         (List.range 0 (rows - 1)
-            |> List.concatMap (\r -> List.map (one r) (List.range 0 (cols - 1)))
+            |> List.concatMap (\r -> List.filterMap (one r) (List.range 0 (cols - 1)))
         )
 
 
-background : Layout -> String -> String -> Float -> List Renderable
-background l loc shot t =
+{-| The camera as an affine transform, so cached geometry can be baked once at
+an identity camera and merely moved each frame.
+
+Deriving it: a point baked at `zoom = 1, cam = (0.5, 0.5)` lands at
+`P0 = ox + boxW/2 + (sx - 0.5) * boxW`, and the same point under a real camera
+lands at `P = ox + boxW/2 + (sx - camX) * boxW * zoom`. Eliminating `sx` gives
+`P = zoom * P0 + t`, which is exactly a translate followed by a scale.
+
+This is the whole reason the cache survives a camera move. Keying the cache on
+the camera would invalidate it every frame of a pan — precisely when the
+background is most expensive and least changed.
+
+-}
+cameraOffset : Layout -> ( Float, Float )
+cameraOffset l =
+    let
+        anchor c len camN =
+            c - l.zoom * c + l.zoom * len * 0.5 - l.zoom * len * camN
+    in
+    ( anchor (l.ox + l.boxW / 2) l.boxW l.camX
+    , anchor (l.oy + l.boxH / 2) l.boxH l.camY
+    )
+
+
+cameraXf : Layout -> List Setting
+cameraXf l =
+    let
+        ( tx, ty ) =
+            cameraOffset l
+    in
+    [ transform [ translate tx ty, scale l.zoom l.zoom ] ]
+
+
+{-| The same camera as a CSS transform, for the stacked background canvas.
+
+`transform-origin: 0 0` plus `translate(...) scale(...)` composes right-to-left
+as `p -> t + s * p`, which is exactly what `cameraXf` does on the context. So
+the background can be rasterised once and then moved by the compositor instead
+of being re-issued to the canvas sixty times a second.
+
+-}
+cameraCss : Layout -> String
+cameraCss l =
+    let
+        ( tx, ty ) =
+            cameraOffset l
+
+        px v =
+            String.fromFloat v ++ "px"
+    in
+    "translate(" ++ px tx ++ "," ++ px ty ++ ") scale(" ++ String.fromFloat l.zoom ++ ")"
+
+
+identityLayout : Layout -> Layout
+identityLayout l =
+    { l | camX = 0.5, camY = 0.5, zoom = 1 }
+
+
+{-| What the cached background depends on. Deliberately excludes the camera.
+-}
+bgKey : Layout -> String -> String -> String
+bgKey l loc shot =
+    String.join "|"
+        [ loc, shot, String.fromInt (round l.boxW), String.fromInt (round l.boxH) ]
+
+
+{-| Everything in the background that does not move: bands, ridges, hatching,
+set dressing. Built at an identity camera and cached by `bgKey`; the lamps are
+the only live part and are drawn separately because they gutter.
+-}
+backgroundStatic : Layout -> String -> String -> List Renderable
+backgroundStatic l0 loc shot =
+    background (identityLayout l0) loc shot
+
+
+background : Layout -> String -> String -> List Renderable
+background l loc shot =
     let
         p =
             palette loc
 
         hatch =
-            hatchBand l p.hatch loc
+            hatchRegion l p.hatch loc
+
+        farSeed =
+            loc ++ "far"
+
+        midSeed =
+            loc ++ "mid"
     in
     if shot == "insert" then
         -- a hard cut to the clue, filling frame, on a flat ground. The clue is
@@ -434,24 +621,26 @@ background l loc shot t =
         [ Canvas.shapes [ fill p.band2 ] [ Canvas.rect ( l.ox, l.oy ) l.boxW l.boxH ] ]
 
     else
+        -- Each shape is hatched immediately after it is filled, inside its own
+        -- region. Strokes are clipped to the shape, and anything that strays
+        -- over a boundary is painted out by the next shape anyway.
+        --
+        -- Depth reads through weight: the far ridge is dense and dark, the
+        -- floor nearest the viewer is sparse and diffuse.
         List.concat
             [ [ Canvas.shapes [ fill p.sky ] [ Canvas.rect ( l.ox, l.oy ) l.boxW l.boxH ]
+              , hatch (rectRegion -0.1 -0.05 1.1 0.22) 94 7 0.4
               , Canvas.shapes [ fill p.band1 ] [ stageRect l ( 0, 0.2 ) 1 0.25 ]
+              , hatch (rectRegion 0 0.2 1 0.45) 110 11 0.6
               , Canvas.shapes [ fill p.band2 ] [ stageRect l ( 0, 0.4 ) 1 0.25 ]
-
-              -- sky is lit, so it barely takes any ink at all
-              , hatch 0.0 0.22 26 2 0.45
-              , hatch 0.22 0.45 32 4 0.7
+              , hatch (rectRegion 0 0.4 1 0.65) 122 11 0.8
               ]
-            , lamps l p loc t
-            , [ hills l p.far 0.52 0.05 (Rng.float01 (loc ++ "far"))
-              , hatch 0.45 0.6 38 4 0.9
-              , hills l p.mid 0.63 0.07 (Rng.float01 (loc ++ "mid"))
-              , hatch 0.6 0.74 42 5 1.05
+            , [ hills l p.far 0.52 0.05 farSeed
+              , hatch (hillRegion farSeed 0.52 0.05 0.8) 148 23 1.35
+              , hills l p.mid 0.63 0.07 midSeed
+              , hatch (hillRegion midSeed 0.63 0.07 0.9) 133 20 1.05
               , Canvas.shapes [ fill p.ground ] [ stageRect l ( 0, 0.74 ) 1 0.3 ]
-
-              -- the floor is furthest from the light and carries the most ink
-              , hatch 0.74 1.04 48 8 1.2
+              , hatch (rectRegion 0 0.74 1 1.04) 110 20 0.7
               ]
             , scatter l p loc
             ]
@@ -483,44 +672,52 @@ lamps l p loc t =
     List.map one (List.range 0 3)
 
 
-hills : Layout -> Color -> Float -> Float -> Float -> Renderable
+{-| The skyline of a ridge, as a plain function of x.
+
+It has to be analytic, not a hashed control polygon, because the hatcher needs
+to ask "is this point inside the hill" thousands of times a frame. Two summed
+sines with hashed phases give a smooth ridge that is cheap to evaluate anywhere
+— and, incidentally, fixes the stepped slabs the old control-point version drew.
+
+-}
+hillY : String -> Float -> Float -> Float -> Float
+hillY seed baseY amp =
+    let
+        -- hashed ONCE per ridge, not once per sample. The hatcher asks
+        -- "is this inside the hill" tens of thousands of times per rebuild,
+        -- and hashing a string in that loop was costing seconds.
+        p1 =
+            Rng.phase seed
+
+        p2 =
+            Rng.phase (seed ++ "b")
+    in
+    \x ->
+        baseY - amp * (0.45 + 0.32 * sin (x * 6.1 + p1) + 0.23 * sin (x * 11.7 + p2))
+
+
+hills : Layout -> Color -> Float -> Float -> String -> Renderable
 hills l color baseY amp seed =
     let
         n =
-            7
+            48
 
-        pointAt i =
+        ridge =
+            hillY seed baseY amp
+
+        pt i =
             let
                 x =
-                    toFloat i / toFloat n
-
-                y =
-                    baseY - amp * (0.4 + Rng.float01 (String.fromFloat seed ++ String.fromInt i))
+                    -0.08 + (toFloat i / toFloat n) * 1.16
             in
-            toScreen l ( x, y )
-
-        start =
-            toScreen l ( -0.05, baseY + 0.4 )
-
-        segs =
-            List.range 0 n
-                |> List.concatMap
-                    (\i ->
-                        let
-                            ( px, py ) =
-                                pointAt i
-
-                            ( nx, _ ) =
-                                toScreen l ( (toFloat i + 0.5) / toFloat n, 0 )
-                        in
-                        [ Canvas.quadraticCurveTo ( nx, py - unit l * amp * 0.5 ) ( px, py ) ]
-                    )
-
-        endPt =
-            toScreen l ( 1.05, baseY + 0.4 )
+            toScreen l ( x, ridge x )
     in
     Canvas.shapes [ fill color ]
-        [ Canvas.path start (segs ++ [ Canvas.lineTo endPt ]) ]
+        [ Canvas.path (toScreen l ( -0.08, 1.1 ))
+            (List.map (pt >> Canvas.lineTo) (List.range 0 n)
+                ++ [ Canvas.lineTo (toScreen l ( 1.08, 1.1 )) ]
+            )
+        ]
 
 
 {-| Set dressing, placed by hash. Same spot for everyone, forever, without
@@ -912,6 +1109,31 @@ blendPose a b p =
     }
 
 
+{-| Limbs draw out to ~1.8x before a wobble and settle back after it.
+-}
+reachOf : ActorState -> Float
+reachOf a =
+    if a.moving && a.act == "noodle" then
+        1 + 0.8 * stretchEnv a.actP
+
+    else
+        1
+
+
+{-| Legs that extend must push the body up, not the feet down: the character
+stays planted and gets taller. Drawn by moving the ground line down in local
+space and lifting the whole group by the same amount, so the two cancel exactly
+at the sole.
+
+Bubbles need this too — anchoring them to the resting head height means a
+character who stretches grows straight up into their own dialogue.
+
+-}
+liftOf : CharDef -> Float -> ActorState -> Float
+liftOf def h a =
+    -(rigOf def h).hipY * (reachOf a - 1)
+
+
 drawActor : Layout -> String -> ActorState -> Float -> List Renderable
 drawActor l id a t =
     let
@@ -987,19 +1209,29 @@ drawActor l id a t =
         sx =
             1 / sy
 
-        parts =
-            body l def pose h id t
-                (if a.moving then
-                    a.act
+        mode =
+            if a.moving then
+                a.act
 
-                 else
-                    ""
-                )
-                ++ face l def pose h a.facing a.expr id t
+            else
+                ""
+
+        reach =
+            reachOf a
+
+        lift =
+            liftOf def h a
+
+        -- halo underneath the whole figure, then the figure itself
+        parts =
+            body l def pose h id t mode reach lift "halo"
+                ++ face l def pose h a.facing a.expr id t "halo"
+                ++ body l def pose h id t mode reach lift "art"
+                ++ face l def pose h a.facing a.expr id t "art"
     in
     [ Canvas.group
         [ transform
-            [ translate fx (fy - bob)
+            [ translate fx (fy - bob - lift)
             , scale (sx * a.facing) sy
             , rotate (degrees pose.tilt)
             ]
@@ -1055,6 +1287,27 @@ boil t seed i amp =
     (Rng.float01 (seed ++ String.fromInt i ++ String.fromInt (floor (t * 10))) - 0.5) * amp
 
 
+{-| Stretch envelope for a noodle: limbs draw out over the first fifth of the
+act, hold long, then snap back over the last fifth. 0 at both ends, 1 through
+the middle.
+
+Rubber hose stretches *into* the wobble and settles *out* of it. Waving at a
+constant length reads as a flag; extending first reads as a limb made of hose.
+
+-}
+stretchEnv : Float -> Float
+stretchEnv p =
+    let
+        ramp x =
+            let
+                c =
+                    clamp 0 1 x
+            in
+            c * c * (3 - 2 * c)
+    in
+    min (ramp (p / 0.18)) (ramp ((1 - p) / 0.18))
+
+
 {-| A limb as a travelling sine wave — the third of the three Adventure Time
 limb modes, alongside the stiff arc and the hard right-angle bend.
 
@@ -1098,11 +1351,15 @@ wavePath ( ax, ay ) ( bx, by ) amp freq phase =
     Canvas.path (pt 0) (List.map (pt >> Canvas.lineTo) (List.range 1 n))
 
 
-body : Layout -> CharDef -> Pose -> Float -> String -> Float -> String -> List Renderable
-body _ def pose h id t mode =
+body : Layout -> CharDef -> Pose -> Float -> String -> Float -> String -> Float -> Float -> String -> List Renderable
+body _ def pose h id t mode reach footY layer =
     let
         r =
             rigOf def h
+
+        -- how far arms and legs are drawn out beyond their resting length
+        armLen =
+            r.armLen * reach
 
         wob =
             h * 0.012
@@ -1119,20 +1376,20 @@ body _ def pose h id t mode =
                     dir * (r.hipR * 0.5 + pose.spread * h * 0.11)
 
                 ctrl =
-                    ( hipX + dir * r.limb * 0.8 + bo 1, r.hipY + (0 - r.hipY) * 0.55 + bo 2 )
+                    ( hipX + dir * r.limb * 0.8 + bo 1, r.hipY + (footY - r.hipY) * 0.55 + bo 2 )
             in
             if mode == "noodle" then
-                wavePath ( hipX, r.hipY ) ( footX, 0 ) (h * 0.05) 7.5 (t * 6 + dir * 1.7)
+                wavePath ( hipX, r.hipY ) ( footX, footY ) (h * 0.05 * reach) 7.5 (t * 6 + dir * 1.7)
 
             else
-                Canvas.path ( hipX, r.hipY ) [ Canvas.quadraticCurveTo ctrl ( footX, 0 ) ]
+                Canvas.path ( hipX, r.hipY ) [ Canvas.quadraticCurveTo ctrl ( footX, footY ) ]
 
         footAt dir =
-            ( dir * (r.hipR * 0.5 + pose.spread * h * 0.11), 0 )
+            ( dir * (r.hipR * 0.5 + pose.spread * h * 0.11), footY )
 
         handAt dir angle =
-            ( dir * r.shoulderR * 0.9 + dir * sin (degrees angle) * r.armLen
-            , r.shoulderY + cos (degrees angle) * r.armLen
+            ( dir * r.shoulderR * 0.9 + dir * sin (degrees angle) * armLen
+            , r.shoulderY + cos (degrees angle) * armLen
             )
 
         arm dir angle bend i =
@@ -1155,7 +1412,7 @@ body _ def pose h id t mode =
             if mode == "noodle" then
                 wavePath ( shX, r.shoulderY )
                     ( handX, handY )
-                    (r.armLen * 0.34)
+                    (armLen * 0.34)
                     9.5
                     (t * 7 + toFloat i)
 
@@ -1164,8 +1421,8 @@ body _ def pose h id t mode =
                 -- bows like a hose instead of hinging like a joint
                 Canvas.path ( shX, r.shoulderY )
                     [ Canvas.quadraticCurveTo
-                        ( (shX + handX) / 2 + nx / len * bend * r.armLen * 0.32 + bo i
-                        , (r.shoulderY + handY) / 2 + ny / len * bend * r.armLen * 0.32 + bo (i + 1)
+                        ( (shX + handX) / 2 + nx / len * bend * armLen * 0.32 + bo i
+                        , (r.shoulderY + handY) / 2 + ny / len * bend * armLen * 0.32 + bo (i + 1)
                         )
                         ( handX, handY )
                     ]
@@ -1196,15 +1453,30 @@ body _ def pose h id t mode =
             in
             -- toe leads forward, heel stays under the leg: without this the
             -- legs just stop, and the figure reads as an insect
-            Canvas.path ( fxx - h * 0.028, 0 )
-                [ Canvas.quadraticCurveTo ( fxx - h * 0.03, h * 0.05 ) ( fxx + h * 0.02, h * 0.048 )
-                , Canvas.quadraticCurveTo ( fxx + h * 0.085, h * 0.046 ) ( fxx + h * 0.082, 0 )
-                , Canvas.lineTo ( fxx - h * 0.028, 0 )
+            Canvas.path ( fxx - h * 0.028, footY )
+                [ Canvas.quadraticCurveTo ( fxx - h * 0.03, footY + h * 0.05 )
+                    ( fxx + h * 0.02, footY + h * 0.048 )
+                , Canvas.quadraticCurveTo ( fxx + h * 0.085, footY + h * 0.046 )
+                    ( fxx + h * 0.082, footY )
+                , Canvas.lineTo ( fxx - h * 0.028, footY )
                 ]
 
         stroked w c =
             [ stroke c, lineWidth w, lineCap RoundCap, lineJoin RoundJoin ]
+
+        halo =
+            r.outline * 3.2
     in
+    if layer == "halo" then
+        -- Comic Chat never shades its characters; it lifts them off the
+        -- hatching with a thick white keyline instead. Drawn as a pass under
+        -- the whole figure so limbs, torso and head share one silhouette
+        -- rather than each getting its own outline.
+        [ Canvas.shapes (stroked (r.limb + halo * 2) paper) limbs
+        , Canvas.shapes (stroked (halo * 2) paper) (torso ++ gloves ++ [ shoe -1, shoe 1 ])
+        ]
+
+    else
     -- Every part is drawn twice: a fat dark pass, then the fill inside it. The
     -- outline is what separates head from shoulders when both are the same
     -- colour — which is how Adventure Time gets away with it, and why Minos
@@ -1336,8 +1608,8 @@ faceOf expr =
             { eyeOpen = 1, eyeR = 1, pupilX = 0, pupilY = 0, brow = 0, browY = 0.18, curve = 0.15, mouthW = 1, open = 0 }
 
 
-face : Layout -> CharDef -> Pose -> Float -> Float -> String -> String -> Float -> List Renderable
-face _ def _ h _ expr id t =
+face : Layout -> CharDef -> Pose -> Float -> Float -> String -> String -> Float -> String -> List Renderable
+face _ def _ h _ expr id t layer =
     let
         f =
             faceOf expr
@@ -1407,6 +1679,12 @@ face _ def _ h _ expr id t =
                         [ Canvas.quadraticCurveTo ( 0, mouthY + f.curve * headR * 0.45 ) ( mouthW, mouthY ) ]
                     ]
     in
+    if layer == "halo" then
+        [ Canvas.shapes [ stroke paper, lineWidth (r.outline * 6.4), lineJoin RoundJoin ]
+            [ Canvas.circle ( 0, headY ) headR ]
+        ]
+
+    else
     [ Canvas.shapes [ stroke ink, lineWidth (r.outline * 2) ]
         [ Canvas.circle ( 0, headY ) headR ]
     , Canvas.shapes [ fill def.body ] [ Canvas.circle ( 0, headY ) headR ]
@@ -1451,6 +1729,13 @@ drawBubble l st b =
 ink : Color
 ink =
     Color.rgb255 26 22 30
+
+
+{-| The keyline that lifts characters off the hatching.
+-}
+paper : Color
+paper =
+    Color.rgb255 250 249 245
 
 
 {-| A hard rectangle at the top of the frame, no tail. It is the chronicle
@@ -1563,7 +1848,9 @@ speech l b a =
             toScreen l a.pos
 
         headTop =
-            fy - (charDef b.who).height * u * 1.0
+            fy
+                - (charDef b.who).height * u
+                - liftOf (charDef b.who) ((charDef b.who).height * u) a
 
         cx =
             fx + a.facing * bw * 0.22

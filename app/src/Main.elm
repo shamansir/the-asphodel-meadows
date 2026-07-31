@@ -23,6 +23,7 @@ import Dict
 import Fold
 import Html exposing (Html, div, span, text)
 import Html.Attributes exposing (style)
+import Html.Lazy
 import Http
 import HttpDate
 import Json.Decode as D
@@ -46,6 +47,18 @@ type alias Model =
     , debug : Bool
     , stepped : Bool
     , plates : Bool
+
+    -- Cached background geometry. Roughly 1,200 hatch paths plus the ridges
+    -- and set dressing, all of which are static for as long as the location,
+    -- the shot type and the viewport hold still — which is most of the time.
+    -- Baked at an identity camera, so panning and zooming do not invalidate it
+    -- (see Render.cameraXf).
+    , bgKey : String
+    , bg : List Canvas.Renderable
+
+    -- smoothed, so the hatch density can be judged on real hardware rather
+    -- than from headless captures, which rasterise in software
+    , fps : Float
     }
 
 
@@ -104,6 +117,9 @@ init flags =
       , debug = num "hud" 1 /= 0
       , stepped = num "stepped" 1 /= 0
       , plates = num "plates" 1 /= 0
+      , bgKey = ""
+      , bg = []
+      , fps = 0
       }
     , Cmd.batch
         [ fetchChunk
@@ -146,10 +162,21 @@ update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         Frame posix ->
-            ( { model | now = posix }, Cmd.none )
+            let
+                dt =
+                    toFloat (Time.posixToMillis posix - Time.posixToMillis model.now)
+
+                fps =
+                    if dt > 0 && dt < 1000 then
+                        model.fps * 0.9 + (1000 / dt) * 0.1
+
+                    else
+                        model.fps
+            in
+            ( refreshBackground { model | now = posix, fps = fps }, Cmd.none )
 
         Resized w h ->
-            ( { model | size = ( w, h ) }, Cmd.none )
+            ( refreshBackground { model | size = ( w, h ) }, Cmd.none )
 
         GotChunk (Ok ( chunk, serverMs )) ->
             ( { model
@@ -164,6 +191,7 @@ update msg model =
                         Nothing ->
                             0
               }
+                |> refreshBackground
             , Cmd.none
             )
 
@@ -172,6 +200,41 @@ update msg model =
 
         Key key ->
             ( applyKey key model, Cmd.none )
+
+
+{-| Rebuild the cached background when — and only when — the thing it depends
+on changes. Cheap to check every frame: one fold and a string compare.
+
+The fold runs again in `view`, which is mild duplication, but folding a scene is
+microseconds by design (§1) and the point of the cache is the thousand-odd hatch
+paths, not the arithmetic.
+
+-}
+refreshBackground : Model -> Model
+refreshBackground model =
+    case model.chunk |> Maybe.andThen (\c -> Fold.seek c (worldT model c) |> Maybe.map (Tuple.pair c)) of
+        Nothing ->
+            model
+
+        Just ( _, found ) ->
+            let
+                st =
+                    Fold.stateAt found.scene found.localT
+
+                l =
+                    Render.layout model.size st
+
+                key =
+                    Render.bgKey l found.scene.loc st.shot
+            in
+            if key == model.bgKey then
+                model
+
+            else
+                { model
+                    | bgKey = key
+                    , bg = Render.backgroundStatic l found.scene.loc st.shot
+                }
 
 
 applyKey : String -> Model -> Model
@@ -425,17 +488,43 @@ view model =
                             l =
                                 Render.layout ( w, h ) st
                         in
-                        [ Canvas.toHtml ( round w, round h )
-                            [ style "display" "block" ]
-                            (Render.scene l
-                                found.scene.loc
-                                st
-                                found.localT
-                                { stepped = model.stepped, plates = model.plates }
-                            )
+                        [ -- Background: rasterised once per location onto its
+                          -- own canvas, then moved by the compositor. `lazy3`
+                          -- is what keeps elm-canvas from re-issuing every
+                          -- hatch path each frame — the whole point of the
+                          -- split.
+                          div
+                            [ style "position" "absolute"
+                            , style "inset" "0"
+                            , style "overflow" "hidden"
+                            ]
+                            [ div
+                                [ style "transform-origin" "0 0"
+                                , style "transform" (Render.cameraCss l)
+                                ]
+                                [ Html.Lazy.lazy3 backdrop (round w) (round h) model.bg ]
+                            ]
+                        , div [ style "position" "absolute", style "inset" "0" ]
+                            [ Canvas.toHtml ( round w, round h )
+                                [ style "display" "block" ]
+                                (Render.scene l
+                                    found.scene.loc
+                                    st
+                                    found.localT
+                                    { stepped = model.stepped, plates = model.plates }
+                                )
+                            ]
                         , hud model chunk t found
                         ]
         )
+
+
+{-| The background canvas. Kept behind `lazy3` so Elm skips it entirely while
+its inputs are unchanged, which is most frames.
+-}
+backdrop : Int -> Int -> List Canvas.Renderable -> Html msg
+backdrop w h items =
+    Canvas.toHtml ( w, h ) [ style "display" "block" ] items
 
 
 notice : String -> Html msg
@@ -491,6 +580,7 @@ hud model chunk t found =
             , ( "skew", String.fromInt (round model.skewMs) ++ " ms" )
             , ( "sampling", ifElse model.stepped "12 fps stepped" "smooth" )
             , ( "plates", ifElse model.plates "on" "off" )
+            , ( "fps", String.fromInt (round model.fps) )
             ]
 
         row ( k, v ) =
