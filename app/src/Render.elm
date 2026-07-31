@@ -483,6 +483,37 @@ hatchRegion l col seed region cols rows shade =
             in
             max 0 (walk 1)
 
+        -- Direction away from the sun, and how far the region extends along
+        -- it. Every mark's weight is a function of where its anchor sits on
+        -- this axis.
+        ( awayX, awayY ) =
+            ( -(cos sunAngle), -(sin sunAngle) )
+
+        proj ( px, py ) =
+            px * awayX + py * awayY
+
+        corners =
+            [ ( region.x0, region.y0 )
+            , ( region.x1, region.y0 )
+            , ( region.x0, region.y1 )
+            , ( region.x1, region.y1 )
+            ]
+                |> List.map (toScreen l >> proj)
+
+        depthAt point =
+            let
+                lo =
+                    List.minimum corners |> Maybe.withDefault 0
+
+                hi =
+                    List.maximum corners |> Maybe.withDefault 1
+            in
+            if hi - lo < 0.001 then
+                0.5
+
+            else
+                clamp 0 1 ((proj point - lo) / (hi - lo))
+
         one r c =
             let
                 sd =
@@ -496,28 +527,29 @@ hatchRegion l col seed region cols rows shade =
                     , region.y0 + ((toFloat r + 0.5 + jit "j" 0.85) / toFloat rows) * (region.y1 - region.y0)
                     )
 
-                want =
-                    u * (0.016 + Rng.float01 (sd ++ "l") * 0.020) * shade
-
-                screen =
-                    toScreen l stage
-
-                -- stand the mark on the shadow edge if it is close enough
+                -- stand the mark on the shadow edge if one is within reach
                 base =
-                    at screen (negate (run -1 (want * 0.55) screen))
+                    at (toScreen l stage) (negate (run -1 (u * 0.022 * shade) (toScreen l stage)))
+
+                -- Size is a strictly monotonic function of distance from the
+                -- light, with no random component. That is what guarantees the
+                -- ordering: a thinner mark can never sit deeper in shadow than
+                -- a thicker one, because depth is the only thing that sets
+                -- thickness. Randomness is confined to where the anchor lands.
+                depth =
+                    depthAt base
+
+                want =
+                    u * (0.006 + 0.034 * depth) * shade
 
                 len =
                     run 1 want base
             in
-            if not (region.inside stage) || len < u * 0.005 then
+            if not (region.inside stage) || len < u * 0.004 then
                 Nothing
 
             else
-                Just
-                    (hatchStroke base
-                        len
-                        (u * (0.0022 + Rng.float01 (sd ++ "w") * 0.0032) * shade)
-                    )
+                Just (hatchStroke base len (u * (0.0010 + 0.0044 * depth) * shade))
     in
     Canvas.shapes [ fill col, alpha 0.42 ]
         (List.range 0 (rows - 1)
@@ -642,7 +674,7 @@ background l loc shot =
               , Canvas.shapes [ fill p.ground ] [ stageRect l ( 0, 0.74 ) 1 0.3 ]
               , hatch (rectRegion 0 0.74 1 1.04) 110 20 0.7
               ]
-            , scatter l p loc
+            , props l p loc
             ]
 
 
@@ -720,67 +752,245 @@ hills l color baseY amp seed =
         ]
 
 
-{-| Set dressing, placed by hash. Same spot for everyone, forever, without
-being listed in the script.
+{-| Set dressing. All of it is hashed from the location name, so it is in the
+same spot for everyone forever without being listed in the script — and all of
+it lives on the cached layer, so detail is close to free.
 
-The House gets filing stacks — the horror here is procedural, so the props are
-furniture, never fire. Asphodel gets the low pale stalks it is named for.
+Each location gets its own furniture rather than the one generic prop they used
+to share.
 
 -}
-scatter : Layout -> Palette -> String -> List Renderable
-scatter l p loc =
+props : Layout -> Palette -> String -> List Renderable
+props l p loc =
     let
         u =
             unit l
 
-        isHouse =
-            loc == "loc.bank" || loc == "loc.ledgers"
+        pick i lo hi seed =
+            lo + Rng.float01 (loc ++ seed ++ String.fromInt i) * (hi - lo)
+    in
+    List.concat
+        [ colonnade l p loc
+        , flagstones l p
+        , case loc of
+            "loc.bank" ->
+                mooring l p loc
 
-        item i =
+            "loc.ledgers" ->
+                shelving l p loc
+
+            _ ->
+                List.range 0 13
+                    |> List.concatMap
+                        (\i ->
+                            let
+                                ( px, py ) =
+                                    toScreen l ( pick i -0.05 1.05 "st", pick i 0.76 0.99 "sty" )
+
+                                sz =
+                                    u * pick i 0.02 0.05 "stz"
+                            in
+                            -- asphodel: pale stalks, and nothing else, forever
+                            [ Canvas.shapes [ stroke p.prop, lineWidth (u * 0.0035), lineCap RoundCap ]
+                                [ Canvas.path ( px, py )
+                                    [ Canvas.quadraticCurveTo ( px + sz * 0.3, py - sz ) ( px, py - sz * 1.8 ) ]
+                                ]
+                            , Canvas.shapes [ fill p.propTrim ]
+                                [ Canvas.circle ( px, py - sz * 1.9 ) (u * 0.006) ]
+                            ]
+                        )
+        , [ frameEdge l p ]
+        ]
+
+
+{-| A receding row of columns on the horizon. The House has been standing a very
+long time and should look like it.
+-}
+colonnade : Layout -> Palette -> String -> List Renderable
+colonnade l p loc =
+    if loc == "loc.asphodel" then
+        []
+
+    else
+        let
+            u =
+                unit l
+
+            col i =
+                let
+                    x =
+                        -0.02 + toFloat i * 0.075
+
+                    ( px, py ) =
+                        toScreen l ( x, 0.6 )
+
+                    hgt =
+                        u * (0.15 + Rng.float01 (loc ++ "col" ++ String.fromInt i) * 0.05)
+
+                    wid =
+                        u * 0.018
+                in
+                [ Canvas.rect ( px - wid, py - hgt ) (wid * 2) hgt
+                , Canvas.rect ( px - wid * 1.5, py - hgt - u * 0.012 ) (wid * 3) (u * 0.012)
+                ]
+        in
+        [ Canvas.shapes [ fill p.far, alpha 0.85 ]
+            (List.concatMap col (List.range 0 14))
+        ]
+
+
+{-| Perspective lines on the floor. Cheap depth, and it gives the hatching
+something to sit against.
+-}
+flagstones : Layout -> Palette -> List Renderable
+flagstones l p =
+    let
+        u =
+            unit l
+
+        horizonY =
+            0.74
+
+        row i =
             let
-                seed =
-                    loc ++ "prop" ++ String.fromInt i
-
-                x =
-                    Rng.float01 seed
+                k =
+                    toFloat i / 7
 
                 y =
-                    0.75 + Rng.float01 (seed ++ "y") * 0.05
+                    horizonY + (1.06 - horizonY) * (k * k)
+            in
+            Canvas.path (toScreen l ( -0.05, y )) [ Canvas.lineTo (toScreen l ( 1.05, y )) ]
 
-                sizeS =
-                    (0.05 + Rng.float01 (seed ++ "s") * 0.05) * u
+        seam i =
+            let
+                x =
+                    -0.4 + toFloat i * 0.2
+            in
+            Canvas.path (toScreen l ( 0.5 + (x - 0.5) * 0.35, horizonY ))
+                [ Canvas.lineTo (toScreen l ( x, 1.06 )) ]
+    in
+    [ Canvas.shapes [ stroke p.prop, lineWidth (u * 0.0022), alpha 0.35 ]
+        (List.map row (List.range 1 7) ++ List.map seam (List.range 0 9))
+    ]
+
+
+{-| Charon's terminal: mooring posts, a rope line, and the fare box.
+-}
+mooring : Layout -> Palette -> String -> List Renderable
+mooring l p loc =
+    let
+        u =
+            unit l
+
+        post i =
+            let
+                x =
+                    0.04 + toFloat i * 0.23
 
                 ( px, py ) =
-                    toScreen l ( x, y )
+                    toScreen l ( x, 0.79 + Rng.float01 (loc ++ "po" ++ String.fromInt i) * 0.03 )
+
+                hgt =
+                    u * 0.1
             in
-            if isHouse then
-                -- a stack of ledgers, leaning slightly, as they have for
-                -- several thousand years
-                let
-                    shelf j =
-                        Canvas.rect
-                            ( px - sizeS * 0.5 + Rng.float01 (seed ++ String.fromInt j) * sizeS * 0.12
-                            , py - sizeS * (0.35 * toFloat (j + 1))
-                            )
-                            sizeS
-                            (sizeS * 0.28)
-                in
-                [ Canvas.shapes [ fill p.prop ] (List.map shelf (List.range 0 3))
-                , Canvas.shapes [ fill p.propTrim, alpha 0.5 ]
-                    [ Canvas.rect ( px - sizeS * 0.5, py - sizeS * 0.35 ) sizeS (sizeS * 0.05) ]
-                ]
+            [ Canvas.rect ( px - u * 0.011, py - hgt ) (u * 0.022) hgt
+            , Canvas.circle ( px, py - hgt ) (u * 0.016)
+            ]
 
-            else
-                [ Canvas.shapes [ stroke p.prop, lineWidth (sizeS * 0.07), lineCap RoundCap ]
-                    [ Canvas.path ( px, py )
-                        [ Canvas.quadraticCurveTo ( px + sizeS * 0.18, py - sizeS * 0.6 ) ( px, py - sizeS * 1.1 ) ]
-                    ]
-                , Canvas.shapes [ fill p.propTrim ]
-                    [ Canvas.circle ( px, py - sizeS * 1.15 ) (sizeS * 0.1) ]
-                ]
+        rope =
+            List.range 0 3
+                |> List.map
+                    (\i ->
+                        let
+                            a =
+                                toScreen l ( 0.04 + toFloat i * 0.23, 0.79 - 0.1 )
+
+                            b =
+                                toScreen l ( 0.04 + toFloat (i + 1) * 0.23, 0.79 - 0.1 )
+                        in
+                        Canvas.path a
+                            [ Canvas.quadraticCurveTo
+                                ( (Tuple.first a + Tuple.first b) / 2, Tuple.second a + u * 0.035 )
+                                b
+                            ]
+                    )
     in
-    List.concatMap item (List.range 0 5)
+    [ Canvas.shapes [ fill p.prop ] (List.concatMap post (List.range 0 4))
+    , Canvas.shapes [ stroke p.prop, lineWidth (u * 0.004), lineCap RoundCap ] rope
+    ]
 
+
+{-| The filing halls: stacks receding, and a ladder nobody has moved in an age.
+-}
+shelving : Layout -> Palette -> String -> List Renderable
+shelving l p loc =
+    let
+        u =
+            unit l
+
+        stack i =
+            let
+                x =
+                    0.02 + toFloat i * 0.14
+
+                ( px, py ) =
+                    toScreen l ( x, 0.8 )
+
+                w =
+                    u * 0.075
+
+                shelf j =
+                    Canvas.rect
+                        ( px - w / 2 + u * 0.004 * Rng.float01 (loc ++ String.fromInt i ++ String.fromInt j)
+                        , py - u * 0.036 * toFloat (j + 1)
+                        )
+                        w
+                        (u * 0.028)
+            in
+            List.map shelf (List.range 0 (2 + modBy 4 i))
+
+        ladder =
+            let
+                ( lx, ly ) =
+                    toScreen l ( 0.62, 0.8 )
+
+                hgt =
+                    u * 0.19
+            in
+            [ Canvas.path ( lx, ly ) [ Canvas.lineTo ( lx + u * 0.03, ly - hgt ) ]
+            , Canvas.path ( lx + u * 0.05, ly ) [ Canvas.lineTo ( lx + u * 0.07, ly - hgt ) ]
+            ]
+                ++ (List.range 1 5
+                        |> List.map
+                            (\j ->
+                                let
+                                    k =
+                                        toFloat j / 6
+                                in
+                                Canvas.path ( lx + u * 0.03 * k + u * 0.001, ly - hgt * k )
+                                    [ Canvas.lineTo ( lx + u * 0.05 + u * 0.02 * k, ly - hgt * k ) ]
+                            )
+                   )
+    in
+    [ Canvas.shapes [ fill p.prop ] (List.concatMap stack (List.range 0 6))
+    , Canvas.shapes [ stroke p.prop, lineWidth (u * 0.005), lineCap RoundCap ] ladder
+    ]
+
+
+{-| A dark mass at the frame edge, out of the action. Costs one rectangle and
+buys the whole shot a foreground plane.
+-}
+frameEdge : Layout -> Palette -> Renderable
+frameEdge l p =
+    let
+        u =
+            unit l
+
+        ( px, py ) =
+            toScreen l ( -0.02, 0 )
+    in
+    Canvas.shapes [ fill p.prop, alpha 0.55 ]
+        [ Canvas.rect ( px - u * 0.1, py - u * 0.2 ) (u * 0.12) (u * 1.6) ]
 
 
 -- INK
@@ -1828,6 +2038,113 @@ deduction l b =
             (Fold.revealed b)
 
 
+{-| Round every corner of a closed polygon.
+
+Trim a radius back along both edges of each vertex and bridge them with a
+quadratic through the corner itself. General enough for the balloon staircase,
+where corners alternate between convex and concave and the edge lengths vary
+line by line. Degenerate points are dropped first — a zero-length step, which
+happens whenever two lines are the same width, would otherwise ask for the
+direction of a zero vector.
+
+-}
+roundedPolygon : Float -> List ( Float, Float ) -> Shape
+roundedPolygon r pts0 =
+    let
+        far ( ax, ay ) ( bx, by ) =
+            abs (ax - bx) + abs (ay - by) > 0.01
+
+        pts =
+            List.foldr
+                (\p acc ->
+                    case acc of
+                        q :: _ ->
+                            if far p q then
+                                p :: acc
+
+                            else
+                                acc
+
+                        [] ->
+                            [ p ]
+                )
+                []
+                pts0
+
+        n =
+            List.length pts
+
+        rotate k xs =
+            List.drop k xs ++ List.take k xs
+
+        toward ( vx, vy ) ( tx, ty ) =
+            let
+                ( dx, dy ) =
+                    ( tx - vx, ty - vy )
+
+                d =
+                    max 0.001 (sqrt (dx * dx + dy * dy))
+
+                k =
+                    min r (d / 2) / d
+            in
+            ( vx + dx * k, vy + dy * k )
+
+        corner prev cur next =
+            ( toward cur prev, cur, toward cur next )
+
+        corners =
+            List.map3 corner (rotate (n - 1) pts) pts (rotate 1 pts)
+    in
+    case corners of
+        ( a0, _, _ ) :: _ ->
+            Canvas.path a0
+                (List.concatMap
+                    (\( a, c, b ) -> [ Canvas.lineTo a, Canvas.quadraticCurveTo c b ])
+                    corners
+                    -- close the ring. Without this the last edge is never
+                    -- stroked: fill auto-closes a path, stroke does not, so the
+                    -- shape looked right but the top border was simply absent.
+                    ++ [ Canvas.lineTo a0 ]
+                )
+
+        [] ->
+            Canvas.path ( 0, 0 ) []
+
+
+{-| A Comic Chat balloon: one box per line, stacked.
+
+Each line gets a white box sized to that line, so the balloon's silhouette
+steps in and out as the lines change length. Drawn as the **outline of the
+union** rather than as separate rectangles — walk the right edge down, stepping
+across wherever the width changes, then back up the left. That is what gives
+interior lines no top or bottom border while the outermost edges keep theirs,
+without any per-edge bookkeeping.
+
+-}
+lineStack : Float -> Float -> Float -> Float -> List Float -> Shape
+lineStack cx top rowH radius halfWidths =
+    let
+        rowY i =
+            top + toFloat i * rowH
+
+        indexed =
+            List.indexedMap Tuple.pair halfWidths
+
+        downRight =
+            indexed
+                |> List.concatMap
+                    (\( i, hw ) -> [ ( cx + hw, rowY i ), ( cx + hw, rowY (i + 1) ) ])
+
+        upLeft =
+            indexed
+                |> List.reverse
+                |> List.concatMap
+                    (\( i, hw ) -> [ ( cx - hw, rowY (i + 1) ), ( cx - hw, rowY i ) ])
+    in
+    roundedPolygon radius (downRight ++ upLeft)
+
+
 speech : Layout -> Bubble -> Fold.ActorState -> List Renderable
 speech l b a =
     let
@@ -1855,24 +2172,55 @@ speech l b a =
         cx =
             fx + a.facing * bw * 0.22
 
-        cy =
-            headTop - bh * 0.6
+        rowH =
+            bh / toFloat (max 1 (List.length b.lines))
 
         shown =
             Fold.revealed b
 
-        lineH =
-            26 * s
+        -- The balloon grows a line at a time. Only lines that have started
+        -- revealing get a box, so there is never a stretch of empty white
+        -- waiting to be filled.
+        visible =
+            shown |> List.filter (not << String.isEmpty) |> List.length |> max 1
 
-        -- The tail's throat sits well inside the balloon, so the two fill as a
-        -- clean union. Two versions of it: closed for filling, open — no base
-        -- edge — for stroking, because the base is the seam we never want to
-        -- see.
+        -- Bottom edge is fixed and the top rises: the balloon opens upward,
+        -- away from the speaker, so the tail never has to move while the
+        -- balloon is still growing.
+        bottom =
+            headTop - bh * 0.9
+
+        top =
+            bottom - toFloat visible * rowH
+
+        longest =
+            b.lines |> List.map String.length |> List.maximum |> Maybe.withDefault 1 |> max 1
+
+        -- per-line width, proportional to the line's length. The compiler
+        -- measures only the longest line today (§4.2); when it emits per-line
+        -- widths this can use them directly.
+        halfWidths =
+            b.lines
+                |> List.take visible
+                |> List.map
+                    (\line ->
+                        bw / 2 * max 0.34 (toFloat (String.length line) / toFloat longest)
+                    )
+
+        lastHalf =
+            List.reverse halfWidths |> List.head |> Maybe.withDefault (bw / 2)
+
+        shape =
+            lineStack cx top rowH (rowH * 0.34) halfWidths
+
+        -- The tail's throat sits inside the bottom box, so the two fill as a
+        -- clean union. Two versions: closed for filling, open — no base edge —
+        -- for stroking, because the base is the seam we never want to see.
         tailRoot1 =
-            ( cx - bw * 0.24, cy + bh * 0.30 )
+            ( cx - lastHalf * 0.55, bottom - rowH * 0.25 )
 
         tailRoot2 =
-            ( cx + bw * 0.02, cy + bh * 0.36 )
+            ( cx + lastHalf * 0.05, bottom - rowH * 0.25 )
 
         -- overshoot slightly into the head, so the spike lands on the speaker
         -- instead of stopping in mid-air near them
@@ -1886,7 +2234,7 @@ speech l b a =
         tailOutline =
             Canvas.path tailRoot1 [ Canvas.lineTo tailTip, Canvas.lineTo tailRoot2 ]
 
-        centred fam size col =
+        rowText fam size col =
             List.indexedMap
                 (\i str ->
                     Canvas.text
@@ -1895,10 +2243,10 @@ speech l b a =
                         , baseLine Middle
                         , fill col
                         ]
-                        ( cx, cy - (toFloat (List.length b.lines) - 1) * lineH / 2 + toFloat i * lineH )
+                        ( cx, top + (toFloat i + 0.5) * rowH )
                         str
                 )
-                shown
+                (List.take visible shown)
 
         comic =
             "'Comic Sans MS', 'Chalkboard SE', 'Marker Felt', cursive"
@@ -1907,9 +2255,9 @@ speech l b a =
         -- stroke the balloon; then re-fill the tail to erase the balloon's
         -- outline where it crosses the throat; then stroke the tail's two free
         -- edges only. Nothing is ever drawn over the balloon body.
-        balloon shape lw col =
-            [ Canvas.shapes [ fill Color.white ] [ shape, tailFill ]
-            , Canvas.shapes [ stroke col, lineWidth (lw * s), lineJoin RoundJoin ] [ shape ]
+        balloon shp lw col =
+            [ Canvas.shapes [ fill Color.white ] [ shp, tailFill ]
+            , Canvas.shapes [ stroke col, lineWidth (lw * s), lineJoin RoundJoin ] [ shp ]
             , Canvas.shapes [ fill Color.white ] [ tailFill ]
             , Canvas.shapes
                 [ stroke col, lineWidth (lw * s), lineJoin RoundJoin, lineCap RoundCap ]
@@ -1918,16 +2266,11 @@ speech l b a =
     in
     case b.kind of
         "shout" ->
-            balloon (spiked ( cx, cy ) (bw / 2) (bh / 2) b.who) 4 ink
-                ++ centred comic 26 ink
+            balloon shape 4.5 ink ++ rowText comic 26 ink
 
         "whisper" ->
-            [ Canvas.shapes [ fill Color.white, alpha 0.82 ]
-                [ ellipse ( cx, cy ) (bw / 2) (bh / 2) ]
-            , Canvas.shapes [ stroke (Color.rgb255 150 146 158), lineWidth (1.4 * s) ]
-                [ ellipse ( cx, cy ) (bw / 2) (bh / 2) ]
-            ]
-                ++ centred comic 18 (Color.rgb255 90 86 98)
+            balloon shape 1.4 (Color.rgb255 150 146 158)
+                ++ rowText comic 18 (Color.rgb255 90 86 98)
 
         "thought" ->
             let
@@ -1940,23 +2283,23 @@ speech l b a =
                                         2 * pi * toFloat i / 9
                                 in
                                 Canvas.circle
-                                    ( cx + cos ang * bw * 0.47, cy + sin ang * bh * 0.47 )
+                                    ( cx + cos ang * bw * 0.47, bottom - bh / 2 + sin ang * bh * 0.47 )
                                     (bh * 0.2)
                             )
 
                 trail =
-                    [ Canvas.circle ( cx - bw * 0.18, cy + bh * 0.72 ) (bh * 0.1)
-                    , Canvas.circle ( cx - bw * 0.28, cy + bh * 0.98 ) (bh * 0.06)
+                    [ Canvas.circle ( cx - bw * 0.18, bottom + bh * 0.22 ) (bh * 0.1)
+                    , Canvas.circle ( cx - bw * 0.28, bottom + bh * 0.48 ) (bh * 0.06)
                     ]
             in
-            [ Canvas.shapes [ fill Color.white ] (ellipse ( cx, cy ) (bw / 2) (bh / 2) :: lobes ++ trail)
+            [ Canvas.shapes [ fill Color.white ]
+                (ellipse ( cx, bottom - bh / 2 ) (bw / 2) (bh / 2) :: lobes ++ trail)
             , Canvas.shapes [ stroke (Color.rgb255 120 116 130), lineWidth (2 * s) ] (lobes ++ trail)
             ]
-                ++ centred comic 22 ink
+                ++ rowText comic 22 ink
 
         _ ->
-            balloon (ellipse ( cx, cy ) (bw / 2) (bh / 2)) 3 ink
-                ++ centred comic 22 ink
+            balloon shape 3 ink ++ rowText comic 22 ink
 
 
 {-| A shout balloon: the same ellipse, spiked. Alternating radii, jittered
