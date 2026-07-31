@@ -432,8 +432,8 @@ the viewer can actually see.
 -}
 bandRegion : (Float -> Float) -> (Float -> Float) -> Float -> Float -> Region
 bandRegion topFn botFn yLo yHi =
-    { x0 = 0
-    , x1 = 1
+    { x0 = -0.18
+    , x1 = 1.2
     , y0 = yLo
     , y1 = yHi
     , inside = \( x, y ) -> y >= topFn x && y <= botFn x
@@ -463,8 +463,8 @@ it. Finally the length is **marched forward and cut at the far boundary**, so
 nothing crosses an edge in either direction, drawn or not.
 
 -}
-hatchRegion : Layout -> Color -> String -> Region -> Int -> Int -> Float -> Float -> List Renderable
-hatchRegion l col seed region cols rows shade ramp =
+hatchRegion : Layout -> Color -> Color -> String -> Region -> Int -> Int -> Float -> Float -> Float -> List Renderable
+hatchRegion l surface col seed region cols rows shade ramp offset =
     let
         u =
             unit l
@@ -521,8 +521,20 @@ hatchRegion l col seed region cols rows shade ramp =
                 stage =
                     ( x, region.rowY x t )
 
+                -- Pushed away from the light — down and back — so a mark sits
+                -- behind the surface in front of it. Escaping the region is
+                -- the point: whatever draws next paints over the overhang,
+                -- which is what "behind" looks like.
+                --
+                -- Per-region, because a distant band is shallow and the offset
+                -- eats a visible fraction of its row spacing. Near surfaces
+                -- take the full shift; the sky takes none.
+                --
+                -- Containment and length are still measured from the unshifted
+                -- anchor, so the lattice stays inside the shape and only the
+                -- drawing slides.
                 base =
-                    toScreen l stage
+                    toScreen l ( x - offset, Tuple.second stage + offset )
 
                 -- How thick the band is at this x. Where two ridges converge
                 -- the band pinches to nothing, and every row lands within a
@@ -539,7 +551,9 @@ hatchRegion l col seed region cols rows shade ramp =
                     t ^ 1.9
 
                 len =
-                    run 1 (u * (0.006 + 0.052 * ramp * weight) * shade * localScale) base
+                    run 1
+                        (u * (0.006 + 0.052 * ramp * weight) * shade * localScale)
+                        (toScreen l stage)
             in
             if not (region.inside stage) || len < u * 0.004 || localScale < 0.12 then
                 Nothing
@@ -551,9 +565,9 @@ hatchRegion l col seed region cols rows shade ramp =
                         (u * (0.0010 + 0.0066 * ramp * weight) * shade * localScale)
                     )
     in
-    -- One draw per row, so the ink can darken as it descends. Rows near the
-    -- light stay grey; the deepest rows approach the weight of the ridge
-    -- strokes, never black.
+    -- One draw per row, so the ink can darken as it descends. Fully opaque:
+    -- the row's colour is mixed from the surface toward the hatch ink, so a
+    -- mark never lightens where another crosses it.
     List.range 0 (rows - 1)
         |> List.map
             (\r ->
@@ -562,7 +576,7 @@ hatchRegion l col seed region cols rows shade ramp =
                         (toFloat r + 0.5) / toFloat rows
                 in
                 Canvas.shapes
-                    [ fill col, alpha (min 0.72 (0.28 + 0.34 * ramp * (t ^ 1.9))) ]
+                    [ fill (mixColor surface col (min 0.95 (0.34 + 0.52 * ramp * (t ^ 1.9)))) ]
                     (List.filterMap (one r t (countAt t)) (List.range 0 (countAt t - 1)))
             )
 
@@ -657,9 +671,9 @@ background l loc shot hatched =
         p =
             palette loc
 
-        hatch region cols rows shade ramp =
+        hatch surface region cols rows shade ramp offset =
             if hatched then
-                hatchRegion l p.hatch loc region cols rows shade ramp
+                hatchRegion l surface p.hatch loc region cols rows shade ramp offset
 
             else
                 []
@@ -689,31 +703,31 @@ background l loc shot hatched =
         -- Depth reads through weight: the far ridge is dense and dark, the
         -- floor nearest the viewer is sparse and diffuse.
         List.concat
-            [ [ Canvas.shapes [ fill p.sky ] [ Canvas.rect ( l.ox, l.oy ) l.boxW l.boxH ]
-              , moon l p loc
-              ]
+            [ [ Canvas.shapes [ fill p.sky ] [ Canvas.rect ( l.ox, l.oy ) l.boxW l.boxH ] ]
 
             -- Sky bands: low ramp. They are flat air, not receding surfaces,
             -- and they already read correctly.
-            , hatch (rectRegion -0.1 -0.05 1.1 0.22) 94 7 0.4 0.55
-            , [ Canvas.shapes [ fill p.band1 ] [ stageRect l ( 0, 0.2 ) 1 0.25 ] ]
-            , hatch (rectRegion 0 0.2 1 0.45) 110 11 0.6 0.6
+            , hatch p.sky (rectRegion -0.18 -0.05 1.2 0.22) 112 7 0.4 0.55 0
+            , [ moon l p loc
+              , Canvas.shapes [ fill p.band1 ] [ stageRect l ( 0, 0.2 ) 1 0.25 ]
+              ]
+            , hatch p.band1 (rectRegion -0.18 0.2 1.2 0.45) 132 11 0.6 0.6 0.004
             , [ Canvas.shapes [ fill p.band2 ] [ stageRect l ( 0, 0.4 ) 1 0.25 ] ]
-            , hatch (rectRegion 0 0.4 1 0.65) 122 11 0.8 0.7
+            , hatch p.band2 (rectRegion -0.18 0.4 1.2 0.65) 146 11 0.8 0.7 0.008
 
             -- The far ridge is bounded by the near one and ramps hardest: its
             -- visible strip is thin, so the whole gradient has to happen there.
             , [ hills l p.far 0.52 0.05 farSeed ]
-            , hatch (bandRegion farRidge midRidge 0.46 0.72) 132 9 0.8 1.35
+            , hatch p.far (bandRegion farRidge midRidge 0.46 0.72) 158 9 0.8 1.35 0.014
             , [ hills l p.mid 0.63 0.07 midSeed ]
-            , hatch (bandRegion midRidge (always 0.742) 0.55 0.75) 120 10 0.66 1.0
+            , hatch p.mid (bandRegion midRidge (always 0.742) 0.55 0.75) 144 10 0.66 1.0 0.014
             , [ Canvas.shapes [ fill p.ground ] [ stageRect l ( 0, 0.74 ) 1 0.3 ]
               , Canvas.shapes [ stroke ink, lineWidth (unit l * 0.0035), alpha 0.45 ]
                     [ Canvas.path (toScreen l ( -0.05, 0.74 ))
                         [ Canvas.lineTo (toScreen l ( 1.05, 0.74 )) ]
                     ]
               ]
-            , hatch (rectRegion 0 0.74 1 1.02) 104 16 0.8 1.05
+            , hatch p.ground (rectRegion -0.18 0.74 1.2 1.02) 125 16 0.8 1.05 0.016
             , props l p loc
             ]
 
@@ -808,15 +822,15 @@ hills l color baseY amp seed =
         pt i =
             let
                 x =
-                    -0.08 + (toFloat i / toFloat n) * 1.16
+                    -0.2 + (toFloat i / toFloat n) * 1.42
             in
             toScreen l ( x, ridge x )
     in
     Canvas.group []
         [ Canvas.shapes [ fill color ]
-            [ Canvas.path (toScreen l ( -0.08, 1.1 ))
+            [ Canvas.path (toScreen l ( -0.2, 1.1 ))
                 (List.map (pt >> Canvas.lineTo) (List.range 0 n)
-                    ++ [ Canvas.lineTo (toScreen l ( 1.08, 1.1 )) ]
+                    ++ [ Canvas.lineTo (toScreen l ( 1.22, 1.1 )) ]
                 )
             ]
 
@@ -2015,6 +2029,25 @@ drawBubble l st b =
 ink : Color
 ink =
     Color.rgb255 26 22 30
+
+
+{-| Blend two colours. Used so hatch rows can darken by changing paint rather
+than by stacking transparency — overlapping translucent marks compound, so an
+alpha ramp makes density and darkness impossible to control separately.
+-}
+mixColor : Color -> Color -> Float -> Color
+mixColor a b k =
+    let
+        ca =
+            Color.toRgba a
+
+        cb =
+            Color.toRgba b
+
+        at v w =
+            v + (w - v) * k
+    in
+    Color.rgb (at ca.red cb.red) (at ca.green cb.green) (at ca.blue cb.blue)
 
 
 {-| The keyline that lifts characters off the hatching.
