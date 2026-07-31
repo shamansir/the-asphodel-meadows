@@ -1,6 +1,9 @@
 .DS_Store
 .shots/
-app/main.js
-app/probe.js
 elm-stuff/
 node_modules/
+
+# Compiled Elm output — main.js, probe.js, lab.js and whatever comes next.
+# Matches only files directly in app/, so the hand-written app/probe.mjs and the
+# vendored app/vendor/elm-canvas.js both stay tracked.
+app/*.js
