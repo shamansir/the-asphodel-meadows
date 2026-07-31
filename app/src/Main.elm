@@ -159,27 +159,8 @@ applyKey key model =
         -- where we are right now, whatever mode we are in
         current =
             model.chunk |> Maybe.map (worldT model) |> Maybe.withDefault 0
-
-        live =
-            model.chunk |> Maybe.map (liveT model) |> Maybe.withDefault 0
-
-        seekBy delta =
-            let
-                target =
-                    current + delta
-            in
-            case model.clock of
-                Paused _ ->
-                    { model | clock = Paused target }
-
-                _ ->
-                    if target >= live - 0.5 then
-                        { model | clock = Live }
-
-                    else
-                        { model | clock = Rewound (live - target) }
     in
-    case key of
+    case String.toLower key of
         " " ->
             case model.clock of
                 Paused _ ->
@@ -188,11 +169,20 @@ applyKey key model =
                 _ ->
                     { model | clock = Paused current }
 
-        "ArrowLeft" ->
-            seekBy -10
+        "arrowleft" ->
+            seekTo (current - 10) model
 
-        "ArrowRight" ->
-            seekBy 10
+        "arrowright" ->
+            seekTo (current + 10) model
+
+        "r" ->
+            jumpScene 0 model
+
+        "[" ->
+            jumpScene -1 model
+
+        "]" ->
+            jumpScene 1 model
 
         "l" ->
             { model | clock = Live }
@@ -205,6 +195,110 @@ applyKey key model =
 
         _ ->
             model
+
+
+{-| Move the clock to an absolute world time, preserving pause state.
+-}
+seekTo : Float -> Model -> Model
+seekTo target model =
+    case model.chunk of
+        Nothing ->
+            model
+
+        Just chunk ->
+            let
+                live =
+                    liveT model chunk
+            in
+            case model.clock of
+                Paused _ ->
+                    { model | clock = Paused target }
+
+                _ ->
+                    if target >= live - 0.5 then
+                        { model | clock = Live }
+
+                    else
+                        { model | clock = Rewound (live - target) }
+
+
+{-| Rewind to the start of a scene `step` scenes from the one playing now: `0`
+restarts the current scene, `-1` the previous, `1` the next.
+
+It always rewinds and never fast-forwards, because in a live show the future
+does not exist yet. "Next scene" therefore means that scene's most recent
+occurrence, which for the looping demo fixture is one cycle back.
+
+Unlike the arrow keys this resumes playback when paused — the point of the key
+is to watch the scene, not to sit at its first frame.
+
+-}
+jumpScene : Int -> Model -> Model
+jumpScene step model =
+    case model.chunk of
+        Nothing ->
+            model
+
+        Just chunk ->
+            let
+                now =
+                    worldT model chunk
+            in
+            case Fold.seek chunk now of
+                Nothing ->
+                    model
+
+                Just found ->
+                    let
+                        starts =
+                            List.map .t0 chunk.scenes
+
+                        n =
+                            max 1 (List.length starts)
+
+                        idx =
+                            starts
+                                |> List.indexedMap Tuple.pair
+                                |> List.filter (\( _, t0 ) -> t0 == found.scene.t0)
+                                |> List.head
+                                |> Maybe.map Tuple.first
+                                |> Maybe.withDefault 0
+
+                        target =
+                            starts
+                                |> List.drop (modBy n (idx + step))
+                                |> List.head
+                                |> Maybe.withDefault 0
+
+                        delta =
+                            if step == 0 then
+                                -found.localT
+
+                            else
+                                let
+                                    raw =
+                                        target - fmod now chunk.cycle
+                                in
+                                if raw >= 0 then
+                                    raw - chunk.cycle
+
+                                else
+                                    raw
+
+                        wanted =
+                            now + delta
+
+                        live =
+                            liveT model chunk
+                    in
+                    { model
+                        | clock =
+                            if wanted >= live - 0.5 then
+                                Live
+
+                            else
+                                Rewound (live - wanted)
+                    }
 
 
 
@@ -343,10 +437,28 @@ hud model chunk t found =
                 Rewound off ->
                     ( "◀ REWOUND −" ++ secs off, "#7ab6e0" )
 
+        sceneNo =
+            chunk.scenes
+                |> List.indexedMap Tuple.pair
+                |> List.filter (\( _, s ) -> s.id == found.scene.id)
+                |> List.head
+                |> Maybe.map (\( i, _ ) -> String.fromInt (i + 1))
+                |> Maybe.withDefault "?"
+
         rows =
             [ ( "world t", secs t )
             , ( "cycle t", secs (fmod t chunk.cycle) )
-            , ( "scene", found.scene.id ++ " @ " ++ secs found.localT )
+            , ( "scene"
+              , found.scene.id
+                    ++ " ("
+                    ++ sceneNo
+                    ++ "/"
+                    ++ String.fromInt (List.length chunk.scenes)
+                    ++ ")  @ "
+                    ++ secs found.localT
+                    ++ " / "
+                    ++ secs found.scene.dur
+              )
             , ( "skew", String.fromInt (round model.skewMs) ++ " ms" )
             , ( "sampling", ifElse model.stepped "12 fps stepped" "smooth" )
             ]
@@ -379,7 +491,7 @@ hud model chunk t found =
                     List.map row rows
                         ++ [ div
                                 [ style "margin-top" "8px", style "color" "#6f6a7c" ]
-                                [ text "space pause · ←/→ ±10s · L live · S sampling · D details" ]
+                                [ text "R restart scene · [ ] prev/next scene · space pause · ←/→ ±10s · L live · S sampling · D details" ]
                            ]
 
                 else

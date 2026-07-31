@@ -24,6 +24,8 @@ server's `Date` response header to correct for a wrong local clock (§1).
 
 | key | |
 |---|---|
+| `R` | restart the scene playing now, from zero |
+| `[` `]` | jump to the previous / next scene's start |
 | `space` | pause / resume (resume snaps back to live) |
 | `←` `→` | seek ∓10s |
 | `L` | return to live |
