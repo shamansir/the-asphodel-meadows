@@ -304,11 +304,11 @@ palette loc =
     case loc of
         -- Charon's terminal: wet slate, one sour lamp
         "loc.bank" ->
-            { sky = Color.rgb255 214 213 210
-            , band1 = Color.rgb255 202 201 198
-            , band2 = Color.rgb255 190 189 187
-            , far = Color.rgb255 168 168 166
-            , mid = Color.rgb255 150 150 148
+            { sky = Color.rgb255 208 213 220
+            , band1 = Color.rgb255 197 202 209
+            , band2 = Color.rgb255 186 190 196
+            , far = Color.rgb255 163 168 175
+            , mid = Color.rgb255 148 151 155
             , ground = Color.rgb255 178 177 174
             , prop = Color.rgb255 92 92 94
             , propTrim = Color.rgb255 60 60 62
@@ -320,11 +320,11 @@ palette loc =
         -- the filing halls take the most ink of anywhere: too many verticals,
         -- not enough light
         "loc.ledgers" ->
-            { sky = Color.rgb255 198 196 196
-            , band1 = Color.rgb255 186 184 184
-            , band2 = Color.rgb255 174 172 172
-            , far = Color.rgb255 148 146 148
-            , mid = Color.rgb255 132 130 132
+            { sky = Color.rgb255 193 196 203
+            , band1 = Color.rgb255 181 184 191
+            , band2 = Color.rgb255 170 172 178
+            , far = Color.rgb255 144 147 154
+            , mid = Color.rgb255 130 131 136
             , ground = Color.rgb255 162 160 160
             , prop = Color.rgb255 78 76 78
             , propTrim = Color.rgb255 48 46 48
@@ -335,11 +335,11 @@ palette loc =
         -- Asphodel: pleasant, endless, and that is the problem with it
         -- Asphodel is the lightest place in the world and the emptiest
         _ ->
-            { sky = Color.rgb255 234 234 231
-            , band1 = Color.rgb255 226 226 223
-            , band2 = Color.rgb255 218 218 215
-            , far = Color.rgb255 198 199 196
-            , mid = Color.rgb255 186 187 184
+            { sky = Color.rgb255 229 232 236
+            , band1 = Color.rgb255 222 225 229
+            , band2 = Color.rgb255 214 217 222
+            , far = Color.rgb255 194 198 203
+            , mid = Color.rgb255 183 186 190
             , ground = Color.rgb255 208 209 205
             , prop = Color.rgb255 120 120 120
             , propTrim = Color.rgb255 88 88 88
@@ -400,6 +400,11 @@ type alias Region =
     , y0 : Float
     , y1 : Float
     , inside : ( Float, Float ) -> Bool
+
+    -- where row `t` (0 at the lit edge, 1 at the far edge) sits at a given x.
+    -- Flat for a rectangle; for a ridge it follows the skyline, so a row of
+    -- marks curves with the surface it is shading.
+    , rowY : Float -> Float -> Float
     }
 
 
@@ -410,6 +415,7 @@ rectRegion x0 y0 x1 y1 =
     , y0 = y0
     , y1 = y1
     , inside = \( x, y ) -> x >= x0 && x <= x1 && y >= y0 && y <= y1
+    , rowY = \_ t -> y0 + t * (y1 - y0)
     }
 
 
@@ -424,6 +430,7 @@ hillRegion seed baseY amp bottom =
     , y0 = baseY - amp
     , y1 = bottom
     , inside = \( x, y ) -> y >= ridge x && y <= bottom
+    , rowY = \x t -> ridge x + t * (bottom - ridge x)
     }
 
 
@@ -483,73 +490,37 @@ hatchRegion l col seed region cols rows shade =
             in
             max 0 (walk 1)
 
-        -- Direction away from the sun, and how far the region extends along
-        -- it. Every mark's weight is a function of where its anchor sits on
-        -- this axis.
-        ( awayX, awayY ) =
-            ( -(cos sunAngle), -(sin sunAngle) )
-
-        proj ( px, py ) =
-            px * awayX + py * awayY
-
-        corners =
-            [ ( region.x0, region.y0 )
-            , ( region.x1, region.y0 )
-            , ( region.x0, region.y1 )
-            , ( region.x1, region.y1 )
-            ]
-                |> List.map (toScreen l >> proj)
-
-        depthAt point =
-            let
-                lo =
-                    List.minimum corners |> Maybe.withDefault 0
-
-                hi =
-                    List.maximum corners |> Maybe.withDefault 1
-            in
-            if hi - lo < 0.001 then
-                0.5
-
-            else
-                clamp 0 1 ((proj point - lo) / (hi - lo))
-
         one r c =
             let
                 sd =
                     seed ++ String.fromInt r ++ "x" ++ String.fromInt c
 
-                jit k amp =
-                    (Rng.float01 (sd ++ k) - 0.5) * amp
+                -- Row position drives everything about the mark's size, so an
+                -- entire row is identical and sits on one line. Jitter is
+                -- horizontal only: nudging a mark vertically would break the
+                -- row, which is the whole point of the arrangement.
+                t =
+                    (toFloat r + 0.5) / toFloat rows
+
+                x =
+                    region.x0
+                        + ((toFloat c + 0.5 + (Rng.float01 sd - 0.5) * 0.8) / toFloat cols)
+                        * (region.x1 - region.x0)
 
                 stage =
-                    ( region.x0 + ((toFloat c + 0.5 + jit "" 0.85) / toFloat cols) * (region.x1 - region.x0)
-                    , region.y0 + ((toFloat r + 0.5 + jit "j" 0.85) / toFloat rows) * (region.y1 - region.y0)
-                    )
+                    ( x, region.rowY x t )
 
-                -- stand the mark on the shadow edge if one is within reach
                 base =
-                    at (toScreen l stage) (negate (run -1 (u * 0.022 * shade) (toScreen l stage)))
-
-                -- Size is a strictly monotonic function of distance from the
-                -- light, with no random component. That is what guarantees the
-                -- ordering: a thinner mark can never sit deeper in shadow than
-                -- a thicker one, because depth is the only thing that sets
-                -- thickness. Randomness is confined to where the anchor lands.
-                depth =
-                    depthAt base
-
-                want =
-                    u * (0.006 + 0.034 * depth) * shade
+                    toScreen l stage
 
                 len =
-                    run 1 want base
+                    run 1 (u * (0.006 + 0.034 * t) * shade) base
             in
             if not (region.inside stage) || len < u * 0.004 then
                 Nothing
 
             else
-                Just (hatchStroke base len (u * (0.0010 + 0.0044 * depth) * shade))
+                Just (hatchStroke base len (u * (0.0010 + 0.0044 * t) * shade))
     in
     Canvas.shapes [ fill col, alpha 0.42 ]
         (List.range 0 (rows - 1)
@@ -674,6 +645,7 @@ background l loc shot hatched =
         -- floor nearest the viewer is sparse and diffuse.
         List.concat
             [ [ Canvas.shapes [ fill p.sky ] [ Canvas.rect ( l.ox, l.oy ) l.boxW l.boxH ]
+              , moon l p loc
               , hatch (rectRegion -0.1 -0.05 1.1 0.22) 94 7 0.4
               , Canvas.shapes [ fill p.band1 ] [ stageRect l ( 0, 0.2 ) 1 0.25 ]
               , hatch (rectRegion 0 0.2 1 0.45) 110 11 0.6
@@ -685,10 +657,42 @@ background l loc shot hatched =
               , hills l p.mid 0.63 0.07 midSeed
               , hatch (hillRegion midSeed 0.63 0.07 0.9) 133 20 1.05
               , Canvas.shapes [ fill p.ground ] [ stageRect l ( 0, 0.74 ) 1 0.3 ]
+              , Canvas.shapes [ stroke ink, lineWidth (unit l * 0.0035), alpha 0.45 ]
+                    [ Canvas.path (toScreen l ( -0.05, 0.74 ))
+                        [ Canvas.lineTo (toScreen l ( 1.05, 0.74 )) ]
+                    ]
               , hatch (rectRegion 0 0.74 1 1.04) 110 20 0.7
               ]
             , props l p loc
             ]
+
+
+{-| There is a moon over the House. Nothing in the myth says there is not, and
+the hatching needs a light source the viewer can actually point at.
+-}
+moon : Layout -> Palette -> String -> Renderable
+moon l p loc =
+    let
+        u =
+            unit l
+
+        ( mx, my ) =
+            toScreen l ( 0.80, 0.19 )
+
+        r =
+            u * 0.055
+    in
+    Canvas.group []
+        [ Canvas.shapes [ fill p.lamp ] [ Canvas.circle ( mx, my ) r ]
+        , Canvas.shapes [ stroke ink, lineWidth (u * 0.003), alpha 0.4 ]
+            [ Canvas.circle ( mx, my ) r ]
+
+        -- one crater, so it is a moon rather than a hole in the sky
+        , Canvas.shapes [ fill p.far, alpha 0.18 ]
+            [ Canvas.circle ( mx - r * 0.3, my - r * 0.25 ) (r * 0.26)
+            , Canvas.circle ( mx + r * 0.35, my + r * 0.2 ) (r * 0.17)
+            ]
+        ]
 
 
 {-| The only warm thing in the House, and always slightly too orange.
@@ -709,9 +713,9 @@ lamps l p loc t =
                     0.9 + 0.1 * sin (t * 3 + Rng.phase seed)
 
                 r =
-                    unit l * 0.02 * flicker
+                    unit l * 0.012 * flicker
             in
-            Canvas.shapes [ fill p.lamp, alpha 0.85 ]
+            Canvas.shapes [ fill p.lamp, alpha 0.6 ]
                 [ Canvas.circle ( x, y ) r ]
     in
     List.map one (List.range 0 3)
@@ -757,11 +761,19 @@ hills l color baseY amp seed =
             in
             toScreen l ( x, ridge x )
     in
-    Canvas.shapes [ fill color ]
-        [ Canvas.path (toScreen l ( -0.08, 1.1 ))
-            (List.map (pt >> Canvas.lineTo) (List.range 0 n)
-                ++ [ Canvas.lineTo (toScreen l ( 1.08, 1.1 )) ]
-            )
+    Canvas.group []
+        [ Canvas.shapes [ fill color ]
+            [ Canvas.path (toScreen l ( -0.08, 1.1 ))
+                (List.map (pt >> Canvas.lineTo) (List.range 0 n)
+                    ++ [ Canvas.lineTo (toScreen l ( 1.08, 1.1 )) ]
+                )
+            ]
+
+        -- Only the skyline is stroked, not the whole silhouette: the sides and
+        -- base run off frame, and outlining those would draw a box around the
+        -- landscape.
+        , Canvas.shapes [ stroke ink, lineWidth (unit l * 0.0035), alpha 0.5 ]
+            [ Canvas.path (pt 0) (List.map (pt >> Canvas.lineTo) (List.range 1 n)) ]
         ]
 
 
