@@ -55,6 +55,7 @@ type alias Model =
     -- (see Render.cameraXf).
     , bgKey : String
     , bg : List Canvas.Renderable
+    , hatched : Bool
 
     -- smoothed, so the hatch density can be judged on real hardware rather
     -- than from headless captures, which rasterise in software
@@ -119,6 +120,7 @@ init flags =
       , plates = num "plates" 1 /= 0
       , bgKey = ""
       , bg = []
+      , hatched = num "hatch" 1 /= 0
       , fps = 0
       }
     , Cmd.batch
@@ -225,7 +227,7 @@ refreshBackground model =
                     Render.layout model.size st
 
                 key =
-                    Render.bgKey l found.scene.loc st.shot
+                    Render.bgKey l found.scene.loc st.shot model.hatched
             in
             if key == model.bgKey then
                 model
@@ -233,7 +235,7 @@ refreshBackground model =
             else
                 { model
                     | bgKey = key
-                    , bg = Render.backgroundStatic l found.scene.loc st.shot
+                    , bg = Render.backgroundStatic l found.scene.loc st.shot model.hatched
                 }
 
 
@@ -279,6 +281,10 @@ applyKey key model =
 
         "n" ->
             { model | plates = not model.plates }
+
+        "h" ->
+            -- forces a cache rebuild, since bgKey carries the flag
+            refreshBackground { model | hatched = not model.hatched, bgKey = "" }
 
         _ ->
             model
@@ -581,6 +587,7 @@ hud model chunk t found =
             , ( "sampling", ifElse model.stepped "12 fps stepped" "smooth" )
             , ( "plates", ifElse model.plates "on" "off" )
             , ( "fps", String.fromInt (round model.fps) )
+            , ( "hatching", ifElse model.hatched "on" "off" )
             ]
 
         row ( k, v ) =
@@ -611,7 +618,7 @@ hud model chunk t found =
                     List.map row rows
                         ++ [ div
                                 [ style "margin-top" "8px", style "color" "#6f6a7c" ]
-                                [ text "R restart scene · [ ] prev/next · N plates · space pause · ←/→ ±10s · L live · S sampling · D details" ]
+                                [ text "R restart scene · [ ] prev/next · N plates · H hatch · space pause · ←/→ ±10s · L live · S sampling · D details" ]
                            ]
 
                 else

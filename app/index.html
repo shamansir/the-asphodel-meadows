@@ -19,7 +19,7 @@
       // ?hud=0 hides the overlay, ?stepped=0 disables 12fps sampling.
       const q = new URLSearchParams(location.search);
       const flags = {};
-      for (const k of ["t", "hud", "stepped"]) {
+      for (const k of ["t", "hud", "stepped", "plates", "hatch"]) {
         if (q.has(k)) flags[k] = parseFloat(q.get(k));
       }
       Elm.Main.init({ node: document.getElementById("root"), flags: flags });

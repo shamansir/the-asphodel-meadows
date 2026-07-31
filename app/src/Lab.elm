@@ -58,6 +58,7 @@ type alias Model =
     , error : Maybe String
     , bgKey : String
     , bg : List Canvas.Renderable
+    , hatched : Bool
     }
 
 
@@ -108,6 +109,7 @@ init _ =
       , error = Nothing
       , bgKey = ""
       , bg = []
+      , hatched = True
       }
     , Cmd.batch
         [ Http.get { url = "/bible/vocabulary.json", expect = Http.expectJson GotVocab vocabDecoder }
@@ -176,13 +178,13 @@ refreshBackground model =
             Render.layout model.size st
 
         key =
-            Render.bgKey l model.loc st.shot
+            Render.bgKey l model.loc st.shot model.hatched
     in
     if key == model.bgKey then
         model
 
     else
-        { model | bgKey = key, bg = Render.backgroundStatic l model.loc st.shot }
+        { model | bgKey = key, bg = Render.backgroundStatic l model.loc st.shot model.hatched }
 
 
 subscriptions : Model -> Sub Msg

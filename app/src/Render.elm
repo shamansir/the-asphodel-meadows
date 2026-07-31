@@ -617,29 +617,42 @@ identityLayout l =
 
 {-| What the cached background depends on. Deliberately excludes the camera.
 -}
-bgKey : Layout -> String -> String -> String
-bgKey l loc shot =
+bgKey : Layout -> String -> String -> Bool -> String
+bgKey l loc shot hatched =
     String.join "|"
-        [ loc, shot, String.fromInt (round l.boxW), String.fromInt (round l.boxH) ]
+        [ loc
+        , shot
+        , String.fromInt (round l.boxW)
+        , String.fromInt (round l.boxH)
+        , if hatched then
+            "h"
+
+          else
+            "flat"
+        ]
 
 
 {-| Everything in the background that does not move: bands, ridges, hatching,
 set dressing. Built at an identity camera and cached by `bgKey`; the lamps are
 the only live part and are drawn separately because they gutter.
 -}
-backgroundStatic : Layout -> String -> String -> List Renderable
-backgroundStatic l0 loc shot =
-    background (identityLayout l0) loc shot
+backgroundStatic : Layout -> String -> String -> Bool -> List Renderable
+backgroundStatic l0 loc shot hatched =
+    background (identityLayout l0) loc shot hatched
 
 
-background : Layout -> String -> String -> List Renderable
-background l loc shot =
+background : Layout -> String -> String -> Bool -> List Renderable
+background l loc shot hatched =
     let
         p =
             palette loc
 
-        hatch =
-            hatchRegion l p.hatch loc
+        hatch region cols rows shade =
+            if hatched then
+                hatchRegion l p.hatch loc region cols rows shade
+
+            else
+                Canvas.shapes [] []
 
         farSeed =
             loc ++ "far"
@@ -2038,20 +2051,23 @@ deduction l b =
             (Fold.revealed b)
 
 
-{-| Round every corner of a closed polygon.
+{-| Round the corners of a closed polygon, each vertex carrying its own radius.
 
-Trim a radius back along both edges of each vertex and bridge them with a
-quadratic through the corner itself. General enough for the balloon staircase,
-where corners alternate between convex and concave and the edge lengths vary
-line by line. Degenerate points are dropped first — a zero-length step, which
-happens whenever two lines are the same width, would otherwise ask for the
-direction of a zero vector.
+Trim that radius back along both edges of the vertex and bridge them with a
+quadratic through the corner itself. Radius `0` collapses both trim points onto
+the vertex, so the curve degenerates and the corner stays sharp — which is how
+the tail keeps its point while every other corner in the same path is rounded.
+
+General enough for the balloon staircase, where corners alternate between
+convex and concave and edge lengths vary line by line. Degenerate points are
+dropped first: a zero-length step, which happens whenever two lines are the
+same width, would otherwise ask for the direction of a zero vector.
 
 -}
-roundedPolygon : Float -> List ( Float, Float ) -> Shape
-roundedPolygon r pts0 =
+roundedPolygon : List ( ( Float, Float ), Float ) -> Shape
+roundedPolygon pts0 =
     let
-        far ( ax, ay ) ( bx, by ) =
+        far ( ( ax, ay ), _ ) ( ( bx, by ), _ ) =
             abs (ax - bx) + abs (ay - by) > 0.01
 
         pts =
@@ -2077,7 +2093,7 @@ roundedPolygon r pts0 =
         rotate k xs =
             List.drop k xs ++ List.take k xs
 
-        toward ( vx, vy ) ( tx, ty ) =
+        toward r ( vx, vy ) ( tx, ty ) =
             let
                 ( dx, dy ) =
                     ( tx - vx, ty - vy )
@@ -2090,8 +2106,8 @@ roundedPolygon r pts0 =
             in
             ( vx + dx * k, vy + dy * k )
 
-        corner prev cur next =
-            ( toward cur prev, cur, toward cur next )
+        corner ( prev, _ ) ( cur, r ) ( next, _ ) =
+            ( toward r cur prev, cur, toward r cur next )
 
         corners =
             List.map3 corner (rotate (n - 1) pts) pts (rotate 1 pts)
@@ -2122,11 +2138,14 @@ interior lines no top or bottom border while the outermost edges keep theirs,
 without any per-edge bookkeeping.
 
 -}
-lineStack : Float -> Float -> Float -> Float -> List Float -> Shape
-lineStack cx top rowH radius halfWidths =
+lineStack : Float -> Float -> Float -> Float -> List Float -> List ( ( Float, Float ), Float ) -> Shape
+lineStack cx top rowH radius halfWidths tail =
     let
         rowY i =
             top + toFloat i * rowH
+
+        soft p =
+            ( p, radius )
 
         indexed =
             List.indexedMap Tuple.pair halfWidths
@@ -2134,15 +2153,20 @@ lineStack cx top rowH radius halfWidths =
         downRight =
             indexed
                 |> List.concatMap
-                    (\( i, hw ) -> [ ( cx + hw, rowY i ), ( cx + hw, rowY (i + 1) ) ])
+                    (\( i, hw ) -> [ soft ( cx + hw, rowY i ), soft ( cx + hw, rowY (i + 1) ) ])
 
         upLeft =
             indexed
                 |> List.reverse
                 |> List.concatMap
-                    (\( i, hw ) -> [ ( cx - hw, rowY (i + 1) ), ( cx - hw, rowY i ) ])
+                    (\( i, hw ) -> [ soft ( cx - hw, rowY (i + 1) ), soft ( cx - hw, rowY i ) ])
     in
-    roundedPolygon radius (downRight ++ upLeft)
+    -- The tail is spliced into the bottom edge rather than drawn as its own
+    -- shape, so balloon and pointer share one continuous outline. Drawing them
+    -- separately meant the tail's edges were stroked from roots inside the
+    -- balloon, crossing the bottom border and running up into the white —
+    -- which no amount of fill-over-stroke ordering can hide.
+    roundedPolygon (downRight ++ tail ++ upLeft)
 
 
 speech : Layout -> Bubble -> Fold.ActorState -> List Renderable
@@ -2211,28 +2235,42 @@ speech l b a =
             List.reverse halfWidths |> List.head |> Maybe.withDefault (bw / 2)
 
         shape =
-            lineStack cx top rowH (rowH * 0.34) halfWidths
-
-        -- The tail's throat sits inside the bottom box, so the two fill as a
-        -- clean union. Two versions: closed for filling, open — no base edge —
-        -- for stroking, because the base is the seam we never want to see.
-        tailRoot1 =
-            ( cx - lastHalf * 0.55, bottom - rowH * 0.25 )
-
-        tailRoot2 =
-            ( cx + lastHalf * 0.05, bottom - rowH * 0.25 )
+            lineStack cx top rowH (rowH * 0.34) halfWidths tail
 
         -- overshoot slightly into the head, so the spike lands on the speaker
         -- instead of stopping in mid-air near them
         tailTip =
             ( fx + a.facing * u * 0.03, headTop + u * 0.02 )
 
-        tailFill =
-            Canvas.path tailRoot1
-                [ Canvas.lineTo tailRoot2, Canvas.lineTo tailTip, Canvas.lineTo tailRoot1 ]
+        -- Roots sit on the bottom edge itself, leaning toward the speaker.
+        throatCentre =
+            cx - a.facing * lastHalf * 0.3
 
-        tailOutline =
-            Canvas.path tailRoot1 [ Canvas.lineTo tailTip, Canvas.lineTo tailRoot2 ]
+        -- Cap the wedge by ANGLE, not by width. A fixed fraction of the
+        -- balloon looked fine on a long tail and splayed open on a short one,
+        -- because the same base subtends a much wider angle when the speaker
+        -- is close. Half the base may not exceed `drop * tan(10°)`, so the
+        -- pointer is never blunter than 20° however near the head sits.
+        drop =
+            max 1 (Tuple.second tailTip - bottom)
+
+        throatHalf =
+            clamp (rowH * 0.1) (lastHalf * 0.25) (drop * tan (degrees 10))
+
+        rootA =
+            throatCentre - throatHalf
+
+        rootB =
+            throatCentre + throatHalf
+
+        -- The throat corners soften like every other join; the tip alone
+        -- stays sharp, because a pointer that has been rounded off is no
+        -- longer pointing at anything.
+        tail =
+            [ ( ( max rootA rootB, bottom ), rowH * 0.34 )
+            , ( tailTip, 0 )
+            , ( ( min rootA rootB, bottom ), rowH * 0.34 )
+            ]
 
         rowText fam size col =
             List.indexedMap
@@ -2251,17 +2289,11 @@ speech l b a =
         comic =
             "'Comic Sans MS', 'Chalkboard SE', 'Marker Felt', cursive"
 
-        -- Order is the whole trick. Fill the union first so there is no seam;
-        -- stroke the balloon; then re-fill the tail to erase the balloon's
-        -- outline where it crosses the throat; then stroke the tail's two free
-        -- edges only. Nothing is ever drawn over the balloon body.
+        -- One shape now: fill it, stroke it. No ordering tricks left to get
+        -- wrong.
         balloon shp lw col =
-            [ Canvas.shapes [ fill Color.white ] [ shp, tailFill ]
+            [ Canvas.shapes [ fill Color.white ] [ shp ]
             , Canvas.shapes [ stroke col, lineWidth (lw * s), lineJoin RoundJoin ] [ shp ]
-            , Canvas.shapes [ fill Color.white ] [ tailFill ]
-            , Canvas.shapes
-                [ stroke col, lineWidth (lw * s), lineJoin RoundJoin, lineCap RoundCap ]
-                [ tailOutline ]
             ]
     in
     case b.kind of
@@ -2292,9 +2324,17 @@ speech l b a =
                     , Canvas.circle ( cx - bw * 0.28, bottom + bh * 0.48 ) (bh * 0.06)
                     ]
             in
-            [ Canvas.shapes [ fill Color.white ]
-                (ellipse ( cx, bottom - bh / 2 ) (bw / 2) (bh / 2) :: lobes ++ trail)
-            , Canvas.shapes [ stroke (Color.rgb255 120 116 130), lineWidth (2 * s) ] (lobes ++ trail)
+            -- Stroke the lobes first, then fill the union over them. Only the
+            -- outer arcs survive, so the silhouette reads as one cloud instead
+            -- of a heap of circles drawn on top of the balloon. The stroke is
+            -- doubled because filling eats its inner half.
+            [ Canvas.shapes
+                [ stroke (Color.rgb255 120 116 130), lineWidth (4 * s), lineJoin RoundJoin ]
+                lobes
+            , Canvas.shapes [ fill Color.white ]
+                (ellipse ( cx, bottom - bh / 2 ) (bw / 2) (bh / 2) :: lobes)
+            , Canvas.shapes [ fill Color.white ] trail
+            , Canvas.shapes [ stroke (Color.rgb255 120 116 130), lineWidth (2 * s) ] trail
             ]
                 ++ rowText comic 22 ink
 
