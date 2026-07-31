@@ -1,4 +1,4 @@
-# the ooo land — architecture
+# Asphodel Meadows — architecture
 
 A always-on, comic-styled 2D animated web page. The world runs on a shared clock, so
 every viewer sees the same moment at the same time. What happens is written ahead of
@@ -20,12 +20,16 @@ Nobody watches an episode. People drop in on a world that has been running witho
 | Repo split | Two repos: **data** (this world) and **engine** (renderer, compiler, agent, plus a sample world for rehearsal). See §13. |
 | Universe | Sherlock Holmes × Greek myth, in one world. Season 1 is *The Great Hiatus* — the three years Doyle never explained. Both sources fully public domain, so there is no IP exposure at all. Tone: *Knives Out*. See `bible/world.md`. |
 
-### Naming caution
+### The name
 
-"The Land of Ooo" is Adventure Time. Keep the repo name if you like it, but the in-world
-proper nouns, character silhouettes, and title card should not read as a fan project.
-Treat `bible/world.md` as the place to establish distinct identity early — it is much
-cheaper to do before assets exist.
+**Asphodel Meadows** — the grey endless field of the ordinary dead, and the largest part
+of this world. Short namespace: `asphodel`.
+
+It is a place rather than a person, so it survives the season resets in §6 that replace
+the entire cast. And it comes from inside the world rather than commenting on it: the
+title deliberately does not wink at the Holmes-among-the-gods premise, because
+`bible/world.md` rule 7 forbids any character from finding that premise remarkable. A
+title that makes the joke undercuts the show before the first frame.
 
 ---
 
@@ -114,7 +118,7 @@ invents an asset, never picks a font size.
 Two repositories, split by concern (§13): **data** is one world, **engine** runs any
 world.
 
-### `ooo-data` — this world
+### `asphodel-data` — this world
 
 ```
 /
@@ -124,14 +128,14 @@ world.
     style.md                    art direction, palette, line weight, bubble rules
     vocabulary.json             world verbs + their mapping to engine primitives
     characters/
-      ch.oo.md                  character sheet: voice, silhouette, verbal tics
+      ch.holmes.md              character sheet: voice, silhouette, verbal tics
   memory/
     world/
       log.jsonl                 append-only, every event, never deleted, never compacted
       digest.md                 tiered summary for prompt use
       arcs.json                 open arcs with deadlines
     characters/
-      ch.oo/
+      ch.holmes/
         core.json               traits, relationships, voice params
         episodic.jsonl          recent events in detail
         compacted.md            older events, salience-summarized
@@ -142,8 +146,8 @@ world.
       index.json                aired-scene index: t0, loc, cast, one-line summary
       chunks/0001.json
   assets/
-    rigs/ch.oo/{atlas.png, rig.json}
-    locations/loc.market/{bg.webp, layers.json}
+    rigs/ch.holmes/{atlas.png, rig.json}
+    locations/loc.bank/{bg.webp, layers.json}
     fonts/{comic.woff2, metrics.json}
   .github/workflows/
     write.yml                   cron: generate + validate + commit + publish
@@ -154,7 +158,7 @@ world.
 Published to Pages as a plain static content API. No build step — the repo contents
 *are* the site.
 
-### `ooo-engine` — the machinery
+### `asphodel-engine` — the machinery
 
 ```
 /
@@ -205,33 +209,36 @@ tabs are the norm here) and prefetch the chunk that will be current in ~10 minut
 
 ```json
 {
-  "chunk": "0142",
+  "chunk": "s01-case001",
   "t0": 1209600,
   "rev": 1,
   "scenes": [
     {
-      "id": "s0142-001",
-      "t0": 0,
-      "dur": 96,
-      "loc": "loc.market",
-      "camera": { "shot": "wide", "move": "push", "to": [0.4, 0.55], "dur": 96 },
+      "id": "s002",
+      "t0": 100,
+      "dur": 105,
+      "loc": "loc.bank",
       "cast": [
-        { "id": "ch.oo",  "at": [0.22, 0.7], "facing": "right" },
-        { "id": "ch.zib", "at": [0.61, 0.7], "facing": "left"  }
+        { "id": "ch.holmes", "at": [0.35, 0.79], "facing":  1, "pose": "stoop", "expr": "neutral" },
+        { "id": "ch.hermes", "at": [0.60, 0.80], "facing": -1, "pose": "idle",  "expr": "confused" }
       ],
       "beats": [
-        { "t": 0,  "who": "ch.oo",  "act": "walk", "to": [0.45, 0.7], "dur": 4.0 },
-        { "t": 4,  "who": "ch.oo",  "expr": "confused",
-          "say": { "kind": "normal", "lines": ["WHERE IS", "MY HAT?"], "w": 118, "h": 62 },
-          "dur": 2.8 },
-        { "t": 7,  "who": "ch.zib", "pose": "shrug", "expr": "smug",
-          "say": { "kind": "normal", "lines": ["WIND TOOK IT.", "TUESDAY PROBLEM."], "w": 164, "h": 62 },
-          "dur": 3.2 }
+        { "t": 8,  "dur": 0.4, "cam": { "to": [0.5, 0.30], "zoom": 2.4, "shot": "insert" } },
+        { "t": 9,  "dur": 15,  "ann": { "kind": "circle", "at": [0.5, 0.30], "r": 0.05, "label": "THE OBOL" } },
+        { "t": 12, "who": "ch.holmes", "dur": 6,
+          "say": { "kind": "deduction",
+                   "lines": ["IT BENDS UNDER THE NAIL.", "STRUCK METAL DOES NOT."],
+                   "w": 328, "h": 82 } },
+        { "t": 25, "dur": 0.4, "cam": { "to": [0.45, 0.52], "zoom": 1.2, "shot": "mid" } },
+        { "t": 26, "who": "ch.hermes", "expr": "shocked", "dur": 4.5,
+          "say": { "kind": "normal",
+                   "lines": ["Foil isn't— that's not", "money. That's not money!"],
+                   "w": 322, "h": 76 } }
       ],
       "emits": [
-        { "id": "evt.hat_lost", "weight": 0.6,
-          "text": "Oo lost the hat; Zib blamed the wind and did not help.",
-          "witnesses": ["ch.oo", "ch.zib"] }
+        { "id": "evt.coin_is_foil", "weight": 0.7,
+          "text": "The surplus coin is gold foil, never legal fare. It was placed to correct the count, concealing an unpaid crossing.",
+          "witnesses": ["ch.holmes", "ch.hermes", "ch.charon"] }
       ]
     }
   ]
@@ -634,7 +641,7 @@ signal to revisit this decision — not before.
 ### Consequences
 
 - No delivery blocks. The chunk is both the authoring unit and the delivery unit.
-- No release job, no lead time, no `ooo-source` / `ooo-land` secrecy split.
+- No release job, no lead time, no private-source / public-mirror secrecy split.
 - Publishing is `git push`. The data repo's contents *are* the content API.
 - **The future-only revision rule from §9 stays.** It was never about secrecy — it stops
   a scene from mutating under a viewer who is mid-watch.
@@ -643,7 +650,7 @@ signal to revisit this decision — not before.
 
 The split that remains is by concern, not by secrecy:
 
-| | `ooo-data` | `ooo-engine` |
+| | `asphodel-data` | `asphodel-engine` |
 |---|---|---|
 | Contains | one world: bible, memory, script, assets | renderer, compiler, agent, editor, `demo-world/` |
 | Changes | daily, by agent | rarely, by humans |

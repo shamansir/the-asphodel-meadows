@@ -1,4 +1,4 @@
-# clock spike
+# Asphodel Meadows — clock spike
 
 Step 1 of ARCHITECTURE.md §12. It exists to prove one thing:
 

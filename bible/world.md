@@ -1,4 +1,6 @@
-# The world — Season 1: *The Great Hiatus*
+# Asphodel Meadows
+
+## The world — Season 1: *The Great Hiatus*
 
 The fixed rules of the universe. The writer agent reads this every chunk. Nothing here
 changes without a human editing this file.
@@ -77,8 +79,10 @@ concourse, a canteen. The horror is procedural.
 **The Bank.** Where Charon works, where the newly dead queue, and where most witnesses can
 be found because everyone passes through eventually.
 
-**The Fields.** Asphodel for the ordinary dead — a grey, pleasant, absolutely endless park.
-Elysium is gated and everyone resents it.
+**The Asphodel Meadows.** The ordinary dead go here — a grey, pleasant, absolutely endless
+park. It is the largest thing in this world by a wide margin, which is why the world is
+named for it: not for the palace, not for the punishments, but for the enormous grey middle
+where almost everyone ends up. Elysium is gated and everyone resents it.
 
 **The Boulder.** Sisyphus's hill, visible from most of the upper house. A permanent
 landmark and a permanent witness.
@@ -155,6 +159,20 @@ the aftermath      the guilty party is not punished so much as inconvenienced
 Between cases, run domestic chunks — the house, the queue, the canteen, the grievances.
 Those are where the memory system does its work, and where the characters become people
 rather than functions.
+
+### Case titles
+
+Administrative or ferry register, from inside the world. Never a pun on the premise, for
+the same reason the show has no title card joke: nobody here finds any of this remarkable.
+
+Good: *The Second Obol*. *Nine Hundred and Four*. *Unclaimed Effects*. *No Change Given*.
+Bad: anything with "elementary", "deduction", or a Baker Street reference.
+
+Reserved, to be used when the case earns it:
+
+- **Pending** — Holmes's own file status: not alive, not dead, no form exists. Save it for
+  the case that is actually about *him* rather than about someone else's trouble. It is the
+  best title we have and it should only be spent once.
 
 ---
 
